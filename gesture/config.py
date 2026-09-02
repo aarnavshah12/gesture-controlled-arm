@@ -50,10 +50,11 @@ FRAME_HEIGHT = 720
 CAMERA_FPS = 30           # requested; the camera reports what it actually delivers in the log
 MIRROR_VIEW = True        # selfie flip so the overlay moves with the hand (model is flip-augmented)
 # OWNER: brightness correction applied right after capture, cv2.convertScaleAbs(frame, alpha, beta).
-# Must be the values used while collecting the training set. TODO owner - identity until then.
+# Owner confirmed 2026-09-02: the dataset was recorded with the camera's default output, no correction,
+# so the identity values are the right ones (correct() is then a no-op).
 BRIGHTNESS_ALPHA = 1.0
 BRIGHTNESS_BETA = 0.0
-BRIGHTNESS_CONFIRMED = False
+BRIGHTNESS_CONFIRMED = True
 
 # --------------------------------------------------------------------------
 # MediaPipe hand landmarker (continuous positioning signal)

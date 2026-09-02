@@ -62,8 +62,8 @@ the arm holds. After HOME or any routine you re-centre again.
 ## Bring-up, in the plan's order
 
 1. **Perception** - `--dry-run`, no arm needed. Each of the six gestures should get a correctly labelled box
-   and the full 21-point skeleton at the same time. Set `BRIGHTNESS_ALPHA/BETA` in `gesture/config.py` to
-   the values used when the dataset was collected (`BRIGHTNESS_CONFIRMED = True`).
+   and the full 21-point skeleton at the same time. (Brightness correction is identity: the dataset was
+   recorded with the camera's default output.)
 2. **State machine** - still `--dry-run`: each gesture fires exactly one `EVENT` line in the log; the toast
    and the arc show it on screen. Flicker fires nothing.
 3. **Mirroring** - arm plugged in and powered 15 s. `--dry-run` shows the planned target on the map in the
