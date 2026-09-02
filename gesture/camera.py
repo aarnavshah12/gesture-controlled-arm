@@ -30,6 +30,7 @@ def _try_open(index: int, width: int, height: int) -> cv2.VideoCapture | None:
         return None
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    cap.set(cv2.CAP_PROP_FPS, config.CAMERA_FPS)   # the built-in camera drops to 15 fps in low light
     ok, frame = cap.read()
     if not ok or frame is None or frame.size == 0:
         cap.release()
@@ -75,8 +76,8 @@ class Camera:
             raise RuntimeError(f"cannot open camera index {self.index}")
         self.cap = cap
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.log.info("camera %d opened %dx%d (asked %dx%d) mirror=%s brightness alpha=%.2f beta=%.1f",
-                      self.index, w, h, self.width, self.height, self.mirror,
+        self.log.info("camera %d opened %dx%d (asked %dx%d) %.0f fps reported mirror=%s brightness alpha=%.2f beta=%.1f",
+                      self.index, w, h, self.width, self.height, cap.get(cv2.CAP_PROP_FPS), self.mirror,
                       config.BRIGHTNESS_ALPHA, config.BRIGHTNESS_BETA)
         self.t_open = time.time()
         return self

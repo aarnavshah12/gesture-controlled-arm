@@ -191,8 +191,8 @@ def draw_target_map(img, box, target, commanded, actual=None, label="planned tar
     h, w = img.shape[:2]
     (xlo, xhi), (ylo, yhi), (zlo, zhi) = box
     mw, mh = 220, 150
-    x0, y0 = w - mw - 16, h - mh - 60
-    translucent(img, x0 - 8, y0 - 26, x0 + mw + 40, y0 + mh + 8, alpha=0.7)
+    x0, y0 = w - mw - 56, h - mh - 60
+    translucent(img, x0 - 8, y0 - 26, x0 + mw + 44, y0 + mh + 8, alpha=0.7)
     _text(img, label, (x0, y0 - 8), 0.55, WHITE, 1)
     cv2.rectangle(img, (x0, y0), (x0 + mw, y0 + mh), GREY, 1)
     zx = x0 + mw + 22

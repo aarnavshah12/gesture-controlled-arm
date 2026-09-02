@@ -47,6 +47,7 @@ CAMERA_INDEX: int | None = None
 CAMERA_PROBE_MAX = 3      # indices 0..CAMERA_PROBE_MAX are probed when CAMERA_INDEX is None
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
+CAMERA_FPS = 30           # requested; the camera reports what it actually delivers in the log
 MIRROR_VIEW = True        # selfie flip so the overlay moves with the hand (model is flip-augmented)
 # OWNER: brightness correction applied right after capture, cv2.convertScaleAbs(frame, alpha, beta).
 # Must be the values used while collecting the training set. TODO owner - identity until then.
