@@ -179,7 +179,8 @@ class StateMachine:
 
     def _freeze(self, ev: Event) -> bool:
         if self.mode == FROZEN:
-            self.log.info("already FROZEN")
+            self.log.info("already FROZEN: re-asserting the halt")
+            self.actions.freeze()          # a repeated fist re-sends the stop; harmless, never wrong
             return False
         was_routine = self.routine if self.mode == ROUTINE else None
         self._set_mode(FROZEN, f"fist{' during ' + was_routine if was_routine else ''}")

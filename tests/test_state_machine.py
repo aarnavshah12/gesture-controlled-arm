@@ -50,7 +50,8 @@ class StateMachineTest(unittest.TestCase):
 
     def test_ignored_events_report_false(self):
         self.assertTrue(self.sm.on_event(ev("FREEZE")))
-        self.assertFalse(self.sm.on_event(ev("FREEZE")))      # already frozen
+        self.assertFalse(self.sm.on_event(ev("FREEZE")))      # already frozen: no mode change ...
+        self.assertEqual(self.a.calls.count("freeze"), 2)     # ... but the halt is re-asserted
         self.assertFalse(self.sm.on_event(ev("GRIP")))
         self.assertTrue(self.sm.on_event(ev("RELEASE")))
         self.assertTrue(self.sm.on_event(ev("HOME")))
@@ -63,7 +64,7 @@ class StateMachineTest(unittest.TestCase):
         for name in ("GRIP", "HOME", "PICK", "FLOURISH", "FREEZE"):
             self.sm.on_event(ev(name))
         self.assertEqual(self.sm.mode, FROZEN)
-        self.assertEqual(self.a.calls, ["freeze", "pause"])   # nothing else happened
+        self.assertEqual(self.a.calls, ["freeze", "pause", "freeze"])   # only the repeated fist re-asserted the halt
         self.sm.on_event(ev("RELEASE", "open-palm"))
         self.assertEqual(self.sm.mode, MIRROR)
         self.assertEqual(self.a.calls[-2:], ["release", "resume(True)"])

@@ -180,8 +180,8 @@ class MotionController(threading.Thread):
                     self.log.warning("mirror: read_xyz failed during sync: %r", e)
                 if pos is not None:
                     break
-        if pos is None:
-            pos = getattr(self.arm, "commanded", None)
+        if pos is None and dry:
+            pos = getattr(self.arm, "commanded", None)   # dry-run only: live never trusts a commanded point
         with self._lock:
             if pos is not None:
                 self.commanded = tuple(float(v) for v in pos)
@@ -214,11 +214,31 @@ class MotionController(threading.Thread):
             if recenter:
                 self.hand_ref = None
             self.target = self.commanded if self.commanded is not None else self.origin
-        release = getattr(self.arm, "release_halt", None)
-        if release is not None:
-            release()
+            current = self.epoch
+        if not self.release_halt_if_current(current):
+            with self._lock:
+                self.enabled = False
+            return False
         self.log.info("mirror: resumed (recenter=%s)", recenter)
         return True
+
+    def release_halt_if_current(self, epoch: int) -> bool:
+        """Clear the arm's motion inhibit only if no freeze()/pause() happened since `epoch`.
+
+        The check and the release happen under the arm's serial lock, the same lock halt() holds while
+        it sets the inhibit, so a fist either lands before (epoch mismatch -> nothing released) or after
+        (the inhibit is set again and every move frame is refused).
+        """
+        arm_lock = getattr(self.arm, "lock", None) or threading.Lock()
+        with arm_lock:
+            with self._lock:
+                if epoch != self.epoch:
+                    self.log.warning("mirror: stale release of the halt ignored (epoch %d != %d)", epoch, self.epoch)
+                    return False
+            release = getattr(self.arm, "release_halt", None)
+            if release is not None:
+                release()
+            return True
 
     def pause(self) -> None:
         with self._lock:
@@ -265,10 +285,9 @@ class MotionController(threading.Thread):
             if now < next_t:
                 time.sleep(min(self.period, next_t - now))
                 continue
-            if now - next_t > self.period:
+            if now - next_t > 0.25 * self.period:
                 self.late_ticks += 1
-                next_t = now            # never replay missed ticks back-to-back (that would burst commands)
-            next_t += self.period
+            next_t = now + self.period  # never two ticks closer than a period: no replay, no double step
             self.ticks += 1
             self._tick(time.time())
             if (not getattr(self.arm, "dry_run", False) and time.time() - last_readback >= config.READBACK_EVERY_S):

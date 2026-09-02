@@ -104,6 +104,26 @@ class RoutinesTest(unittest.TestCase):
         self.assertTrue(r.abort_and_join(2.0))
         self.assertFalse(r.running)
 
+    def test_request_during_unwind_refused_without_blocking(self):
+        arm = FakeArm(step_s=1.0)                   # a long move: the abort unwinds only at its tick
+        r = Routines(arm, dry_run=True, log=silent_logger())
+
+        class Stuck(FakeArm):
+            def move_to(self, x, y, z, ms=None):    # like a model load: no tick for a while
+                time.sleep(0.6)
+                return super().move_to(x, y, z, ms)
+        r.arm = Stuck(step_s=0.05)
+        r.arm.tick = r._tick
+        r.start("FLOURISH", lambda ok: None)
+        time.sleep(0.05)
+        r.abort()
+        got = []
+        t0 = time.time()
+        r.start("HOME", lambda ok: got.append(ok))
+        self.assertLess(time.time() - t0, 0.3)      # never blocks the UI thread
+        self.assertEqual(got, [False])
+        self.assertTrue(r.abort_and_join(3.0))
+
     def test_unknown_routine(self):
         r = Routines(FakeArm(), dry_run=True, log=silent_logger())
         got = []

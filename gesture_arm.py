@@ -156,9 +156,12 @@ class AppActions(Actions):
                 x, y = pos[0], pos[1]
                 zf = self.box[2][0]
                 self.log.info("resume-mirror: arm at z=%.0f below the box floor %.0f -> vertical rise first", pos[2], zf)
+                # the sync above may have taken a second: a fist in that window bumped the epoch, and the
+                # halt it sent must stay in force. Check + release are atomic against halt().
+                if not self.controller.release_halt_if_current(epoch):
+                    return
                 try:
-                    self.arm.release_halt()
-                    self.arm.move_to(x, y, zf, 800)
+                    self.arm.move_to(x, y, zf, 800)     # refused (ArmError) if a fist lands meanwhile
                 except Exception as e:  # noqa: BLE001
                     self.log.error("resume-mirror: rise refused (%r); mirroring stays disabled - thumbs-up HOME", e)
                     return

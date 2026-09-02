@@ -57,10 +57,13 @@ class Routines:
             self.log.error("unknown routine %s", name)
             done(False)
             return
-        if self.running and self._abort.is_set():
-            self._thread.join(timeout=2.0)          # an aborted routine still unwinding: give it a moment
         if self.running:
-            self.log.warning("routine %s requested while %s is running; ignored", name, self.current)
+            self._thread.join(timeout=0.05)         # a routine that just reported done() may still be exiting
+        if self.running:
+            # never block the UI thread on an aborted routine that is still unwinding (e.g. inside a model
+            # load with no tick): refuse now, the operator repeats the gesture once it has stopped
+            self.log.warning("routine %s requested while %s is still %s; ignored - repeat the gesture",
+                             name, self.current, "stopping" if self._abort.is_set() else "running")
             done(False)
             return
         self._abort.clear()

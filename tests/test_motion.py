@@ -1,4 +1,5 @@
 import math
+import threading
 import unittest
 
 from _common import silent_logger
@@ -191,6 +192,40 @@ class ControllerTest(unittest.TestCase):
         arm.read_xyz = lambda: (0, -175, 150)
         self.assertEqual(c.sync_to_arm(), (0, -175, 150))
         self.assertTrue(c.resume(recenter=False))
+
+    def test_live_sync_never_adopts_commanded(self):
+        class LiveArm(FakeArm):
+            dry_run = False
+        arm = LiveArm()
+        arm.commanded = (0.0, -175.0, 150.0)       # start of an in-flight move, not where the arm is
+        _, c = self.make(arm)
+        self.assertIsNone(c.sync_to_arm())
+        self.assertFalse(c.position_known)
+        self.assertFalse(c.resume(recenter=False))
+
+    def test_release_halt_only_if_epoch_current(self):
+        class InhibitArm(FakeArm):
+            def __init__(self):
+                super().__init__()
+                self.inhibited = False
+                self.lock = threading.RLock()
+
+            def halt(self):
+                super().halt()
+                self.inhibited = True
+
+            def release_halt(self):
+                self.inhibited = False
+        arm = InhibitArm()
+        _, c = self.make(arm)
+        c.resume(recenter=False)
+        epoch = c.epoch
+        c.freeze()
+        self.assertTrue(arm.inhibited)
+        self.assertFalse(c.release_halt_if_current(epoch))   # stale: the halt stays in force
+        self.assertTrue(arm.inhibited)
+        self.assertTrue(c.release_halt_if_current(c.epoch))
+        self.assertFalse(arm.inhibited)
 
     def test_hand_loss_resets_recenter_timer(self):
         arm, c = self.make()

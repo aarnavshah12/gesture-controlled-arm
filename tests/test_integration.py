@@ -184,6 +184,30 @@ class IntegrationTest(unittest.TestCase):
         self.assertTrue(self.ctl.frozen)
         self.assertFalse(self.ctl.enabled)
 
+    def test_fist_during_resume_rise_keeps_the_halt(self):
+        """A1: the queued resume's vertical rise must not clear a halt from a fist that landed during its sync."""
+        a, sm, ctl, actions = self.arm, self.sm, self.ctl, self.actions
+        # arm halted below the box floor (fist during PICK's descent)
+        a.commanded = (0.0, -175.0, 84.0)
+        ctl.sync_to_arm()
+        sm.on_event(__import__("gesture.gestures", fromlist=["Event"]).Event("FREEZE", "fist", 0.9, 0.0))
+        self.assertEqual(sm.mode, FROZEN)
+        self.assertTrue(a.inhibited)
+        # capture the resume closure instead of running it on the ops thread
+        submitted = []
+        actions.ops.submit = lambda fn, label: submitted.append((fn, label))
+        sm.on_event(__import__("gesture.gestures", fromlist=["Event"]).Event("RELEASE", "open-palm", 0.9, 0.0))
+        self.assertEqual(sm.mode, MIRROR)
+        fn = [f for f, l in submitted if l == "resume-mirror"][0]
+        # a second fist lands before the queued resume gets to run
+        sm.on_event(__import__("gesture.gestures", fromlist=["Event"]).Event("FREEZE", "fist", 0.9, 0.0))
+        self.assertEqual(sm.mode, FROZEN)
+        moves_before = a.kinds().count("move")
+        fn()                                        # the stale resume runs now
+        self.assertEqual(a.kinds().count("move"), moves_before)   # no rise was sent
+        self.assertTrue(a.inhibited)                # halt still in force
+        self.assertFalse(ctl.enabled)
+
     def test_flicker_moves_nothing(self):
         self.centre_hand()
         for cls in ("fist", "fist", "open-palm", "fist", "pinch", "fist", "null", "fist", "fist"):
