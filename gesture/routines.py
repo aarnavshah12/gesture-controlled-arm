@@ -24,9 +24,10 @@ class RoutineAborted(Exception):
 class Routines:
     NAMES = ("HOME", "PICK", "FLOURISH")
 
-    def __init__(self, arm, dry_run: bool, log=None):
+    def __init__(self, arm, dry_run: bool, log=None, mac_camera_index: int | None = None):
         self.arm = arm
         self.dry_run = dry_run
+        self.mac_camera_index = mac_camera_index   # PICK must never open the camera the main loop is using
         self.log = log or runlog.get_logger()
         self._abort = threading.Event()
         self._thread: threading.Thread | None = None
@@ -124,6 +125,9 @@ class Routines:
                           self._pick_detector.model_id, time.time() - t0, self._pick_detector.class_names)
         det = self._pick_detector
         camera = b.config.WEBCAM_INDEX if config.PICK_CAMERA_INDEX is None else config.PICK_CAMERA_INDEX
+        if self.mac_camera_index is not None and camera == self.mac_camera_index:
+            raise RuntimeError(f"overhead camera index {camera} is the camera the gesture loop is using; is the "
+                               f"overhead webcam plugged in? (block-picker WEBCAM_INDEX / gesture PICK_CAMERA_INDEX)")
         self.status = "opening overhead camera"
         cap = b.detect.open_camera(camera)
         try:

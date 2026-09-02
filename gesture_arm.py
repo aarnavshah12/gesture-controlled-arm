@@ -200,7 +200,7 @@ def main(argv=None) -> int:
     controller = MotionController(arm, box, check=check)
     controller.sync_to_arm()
     controller.start()
-    routines = Routines(arm, dry_run=args.dry_run)
+    routines = Routines(arm, dry_run=args.dry_run, mac_camera_index=cam.index)
     toasts = viz.Toasts()
     ops = ArmOps(log)
     actions = AppActions(arm, controller, routines, toasts, ops, log)
