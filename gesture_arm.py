@@ -172,10 +172,18 @@ def main(argv=None) -> int:
 
     # Arm: the block picker's driver, or a stand-in when its project is absent (dry-run only).
     box = (config.MIRROR_X_MM, config.MIRROR_Y_MM, config.MIRROR_Z_MM)
+    check = None
     try:
-        from gesture.arm import make_arm, mirror_box
+        from gesture.arm import make_arm, mirror_box, UnsafeTarget, _bp
         arm = make_arm(dry_run=args.dry_run, port=args.port)
         box = mirror_box()
+
+        def check(x, y, z):
+            try:
+                _bp.arm.check_target(x, y, z)
+                return True
+            except UnsafeTarget:
+                return False
     except bp.BlockPickerMissing as e:
         if not args.dry_run:
             raise SystemExit(f"cannot run live without the block-picker project: {e}")
@@ -189,7 +197,7 @@ def main(argv=None) -> int:
              config.VELOCITY_CAP_MM_S, config.CONTROL_HZ)
 
     from gesture.routines import Routines
-    controller = MotionController(arm, box)
+    controller = MotionController(arm, box, check=check)
     controller.sync_to_arm()
     controller.start()
     routines = Routines(arm, dry_run=args.dry_run)

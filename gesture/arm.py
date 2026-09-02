@@ -60,8 +60,13 @@ class GestureArm(_Base):
 
     # -- blocking moves (routines) record the commanded point --------------------------
     def move_to(self, x, y, z, ms=None):
+        pos = super().move_to(x, y, z, ms)   # raises UnsafeTarget / MoveRefused: commanded stays as it was
         self.commanded = (float(x), float(y), float(z))
-        return super().move_to(x, y, z, ms)
+        if self.dry_run:
+            # the driver returns immediately in dry-run; take the commanded time so routines (and their
+            # abort path, pumped through tick()) behave as they will on the rig
+            self.wait((_bp.config.MOVE_MS if ms is None else int(ms)) / 1000.0)
+        return pos
 
     # -- streaming (mirroring) ---------------------------------------------------------
     def stream_to(self, x: float, y: float, z: float, ms: int | None = None) -> None:

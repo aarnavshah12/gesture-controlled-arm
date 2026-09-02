@@ -170,3 +170,54 @@ class ControllerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DetourTest(unittest.TestCase):
+    """Coming back from the block picker's HOME, the straight line to a lateral target crosses the base
+    keep-out radius; the controller must swing around it, never stall, never step inside."""
+    HOME = (-210.0, -56.0, 190.0)
+    MIN_R = 120.0
+
+    def check(self, x, y, z):
+        return (math.hypot(x, y) >= self.MIN_R and -269 <= x <= 272 and -256 <= y <= 24 and 47 <= z <= 210)
+
+    def drive(self, target, max_ticks=400):
+        arm = FakeArm()
+        c = MotionController(arm, BOX, ORIGIN, hz=10.0, log=silent_logger(), check=self.check)
+        arm.commanded = self.HOME
+        c.sync_to_arm()
+        c.resume(recenter=False)
+        c.update_hand((0.5, 0.5), 0.0)
+        for k in range(max_ticks):
+            c.last_hand_t = 0.1 * k              # hand stays "present"; the target is pinned below
+            c.target = target
+            c._tick(0.1 * k)
+            if arm.streams and math.dist(arm.streams[-1], target) < 0.6:   # controller deadband is 0.5 mm
+                break
+        return arm, c
+
+    def test_lateral_target_from_home_swings_around_base(self):
+        target = (145.0, -130.0, 150.0)
+        arm, c = self.drive(target)
+        self.assertTrue(arm.streams and math.dist(arm.streams[-1], target) < 0.6, "never arrived")
+        self.assertGreater(c.detours, 0)
+        self.assertEqual(c.blocked, 0)
+        prev = self.HOME
+        for p in arm.streams:
+            self.assertGreaterEqual(math.hypot(p[0], p[1]), self.MIN_R - 1e-6, p)
+            self.assertLessEqual(math.dist(prev, p), c.max_step + 1e-6)
+            prev = p
+
+    def test_straight_path_used_when_safe(self):
+        arm, c = self.drive(ORIGIN)
+        self.assertEqual(c.detours, 0)
+        self.assertEqual(c.blocked, 0)
+        self.assertTrue(math.dist(arm.streams[-1], ORIGIN) < 0.6)
+
+    def test_polar_step_respects_cap(self):
+        from gesture.motion import step_toward_polar
+        cur, tgt = (-210.0, -56.0, 190.0), (145.0, -130.0, 150.0)
+        p = step_toward_polar(cur, tgt, 15.0)
+        self.assertLessEqual(math.dist(cur, p), 15.0 + 1e-6)
+        self.assertGreaterEqual(math.hypot(p[0], p[1]), min(math.hypot(*cur[:2]), math.hypot(*tgt[:2])) - 1e-6)
+        self.assertEqual(step_toward_polar(cur, cur, 15.0), cur)

@@ -65,6 +65,25 @@ def step_toward(cur, target, max_step: float) -> tuple[float, float, float]:
     return (cur[0] + dx * f, cur[1] + dy * f, cur[2] + dz * f)
 
 
+def step_toward_polar(cur, target, max_step: float) -> tuple[float, float, float]:
+    """Like step_toward, but interpolating radius / angle about the arm's base (and z linearly).
+
+    Used when the straight line from `cur` to `target` would pass through the base keep-out zone
+    (e.g. coming back from HOME): the radius never drops below min(r_cur, r_target), so the path
+    swings around the base instead of through it. The Cartesian step is still <= max_step.
+    """
+    r0, a0 = math.hypot(cur[0], cur[1]), math.atan2(cur[1], cur[0])
+    r1, a1 = math.hypot(target[0], target[1]), math.atan2(target[1], target[0])
+    da = (a1 - a0 + math.pi) % (2 * math.pi) - math.pi
+    arc = abs(da) * max(r0, r1)
+    total = math.sqrt(arc * arc + (r1 - r0) ** 2 + (target[2] - cur[2]) ** 2)
+    if total <= max_step or total == 0.0:
+        return tuple(float(v) for v in target)  # type: ignore[return-value]
+    f = max_step / total
+    r, a, z = r0 + f * (r1 - r0), a0 + f * da, cur[2] + f * (target[2] - cur[2])
+    return (r * math.cos(a), r * math.sin(a), z)
+
+
 def hand_to_target(wrist_norm, ref_norm, origin, box: Box) -> tuple[float, float, float]:
     """Relative mirroring: arm target = origin + gain * (wrist - reference), clamped."""
     dx = (wrist_norm[0] - ref_norm[0]) * config.MIRROR_GAIN_X_MM * config.MIRROR_X_SIGN
@@ -75,10 +94,13 @@ def hand_to_target(wrist_norm, ref_norm, origin, box: Box) -> tuple[float, float
 class MotionController(threading.Thread):
     """Fixed-rate control loop. Feed it wrist positions; it streams capped, clamped targets."""
 
-    def __init__(self, arm, box: Box, origin=None, hz: float | None = None, log=None):
+    def __init__(self, arm, box: Box, origin=None, hz: float | None = None, log=None, check=None):
         super().__init__(name="gesture-motion", daemon=True)
         self.arm = arm
         self.box = box
+        # check(x, y, z) -> bool: the driver's envelope (reach limits, table Z, base keep-out radius).
+        # A step is only streamed if it passes; the driver checks again before sending.
+        self.check = check or (lambda x, y, z: clamp_box((x, y, z), box) == (x, y, z))
         self.origin = tuple(float(v) for v in (origin or config.MIRROR_ORIGIN_XYZ_MM))
         self.hz = config.CONTROL_HZ if hz is None else float(hz)
         self.period = 1.0 / self.hz
@@ -103,6 +125,8 @@ class MotionController(threading.Thread):
         self.late_ticks = 0
         self.commands = 0
         self.refused = 0
+        self.detours = 0
+        self.blocked = 0
         self.errors = 0
 
     # -- inputs -------------------------------------------------------------------
@@ -194,7 +218,8 @@ class MotionController(threading.Thread):
                 "enabled": self.enabled, "frozen": self.frozen, "holding": self.holding,
                 "recenter": self.recenter_required, "target": self.target, "commanded": self.commanded,
                 "actual": self.actual, "ticks": self.ticks, "late": self.late_ticks,
-                "commands": self.commands, "refused": self.refused,
+                "commands": self.commands, "refused": self.refused, "detours": self.detours,
+                "blocked": self.blocked,
             }
 
     def run(self) -> None:
@@ -238,6 +263,20 @@ class MotionController(threading.Thread):
             nxt = step_toward(cur, self.target, self.max_step)
             if prev is not None and max(abs(nxt[i] - cur[i]) for i in range(3)) < 0.5:
                 return
+            if not self.check(*nxt):
+                # straight step leaves the envelope (typically the base keep-out on the way back from
+                # HOME): swing around the base instead; if that is unsafe too, hold this tick and log.
+                alt = step_toward_polar(cur, self.target, self.max_step)
+                if self.check(*alt):
+                    self.detours += 1
+                    nxt = alt
+                else:
+                    self.blocked += 1
+                    if self.blocked in (1, 10, 100) or self.blocked % 1000 == 0:
+                        self.log.warning("mirror: no safe step from %s toward %s (straight %s, arc %s); holding",
+                                         tuple(round(v) for v in cur), tuple(round(v) for v in self.target),
+                                         tuple(round(v) for v in nxt), tuple(round(v) for v in alt))
+                    return
             self.commanded = nxt
         try:
             self.arm.stream_to(*nxt)
