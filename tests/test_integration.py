@@ -48,7 +48,11 @@ class FakeArm:
         return self.move_to(-210, -56, 190, ms)
 
     def halt(self):
+        self.inhibited = True
         self._rec("halt", self.commanded)
+
+    def release_halt(self):
+        self.inhibited = False
 
     def grip(self):
         self._rec("grip")
@@ -77,8 +81,9 @@ class IntegrationTest(unittest.TestCase):
         self.routines = Routines(self.arm, dry_run=True, log=self.log)
         self.toasts = viz.Toasts()
         self.ops = gesture_arm.ArmOps(self.log)
-        self.actions = gesture_arm.AppActions(self.arm, self.ctl, self.routines, self.toasts, self.ops, self.log)
+        self.actions = gesture_arm.AppActions(self.arm, self.ctl, self.routines, self.toasts, self.ops, self.log, box=BOX)
         self.sm = StateMachine(self.actions, log=self.log)
+        self.actions.sm = self.sm
         self.deb = Debouncer(n=3, threshold=0.7, log=self.log)
         self.ctl.resume(recenter=True)
         self.t = 0.0
@@ -95,6 +100,7 @@ class IntegrationTest(unittest.TestCase):
             ev = self.deb.update(P(cls), self.t)
             if ev:
                 self.sm.on_event(ev)
+            self.actions.drain()
         self.deb.update(None, self.t)      # hand goes away between gestures (re-arms the debounce)
 
     def centre_hand(self):
@@ -105,6 +111,7 @@ class IntegrationTest(unittest.TestCase):
     def wait_until(self, pred, timeout=3.0):
         end = time.time() + timeout
         while time.time() < end:
+            self.actions.drain()
             if pred():
                 return True
             time.sleep(0.01)
@@ -147,6 +154,7 @@ class IntegrationTest(unittest.TestCase):
         self.assertIn("halt", a.kinds())
         self.assertTrue(self.wait_until(lambda: not self.routines.running))
         self.assertLessEqual(a.kinds().count("move"), moves_before + 1)
+        self.actions.drain()
         self.assertEqual(sm.mode, FROZEN)           # aborted routine's done() must not unfreeze
         self.hold("pinch")
         self.assertEqual(a.kinds().count("grip"), 1)   # ignored while frozen
@@ -157,6 +165,24 @@ class IntegrationTest(unittest.TestCase):
         idx_rel = max(i for i, e in enumerate(a.log) if e[0] == "release")
         self.assertTrue(ctl.recenter_required)
         self.assertGreaterEqual(len(a.log), idx_rel + 1)
+
+    def test_fist_right_after_open_palm_stays_frozen(self):
+        """The queued resume must not undo a freeze that happened while the release was venting."""
+        self.centre_hand()
+        self.hold("fist")
+        self.assertEqual(self.sm.mode, FROZEN)
+        # slow the release so the resume is still queued when the next fist lands
+        orig = self.arm.release
+        self.arm.release = lambda: (time.sleep(0.4), orig())
+        self.hold("open-palm")
+        self.assertEqual(self.sm.mode, MIRROR)
+        self.hold("fist")                           # within the vent window
+        self.assertEqual(self.sm.mode, FROZEN)
+        time.sleep(0.8)                             # let the queued resume run (and be ignored)
+        self.actions.drain()
+        self.assertEqual(self.sm.mode, FROZEN)
+        self.assertTrue(self.ctl.frozen)
+        self.assertFalse(self.ctl.enabled)
 
     def test_flicker_moves_nothing(self):
         self.centre_hand()

@@ -21,7 +21,7 @@ want the numbers on camera; `f` leaves full screen.)
    homes. Re-centre.
 8. **Dead-man** - start another `peace`, then `fist` mid-wave: banner turns solid red FROZEN, the arm stops.
    Try `pinch`: ignored. `open-palm`: RESUME, back to mirroring.
-9. `q` to quit: the arm vents and homes, the recording is saved.
+9. `q` to quit: the arm vents and homes (if you quit while FROZEN it vents and stays put), the recording is saved.
 
 If a gesture will not fire: look at the arc (is it charging?) and the log (`gesture rejected: ... < 0.70`
 means the model is unsure - move the hand closer / better light; `no detection` means the box is not

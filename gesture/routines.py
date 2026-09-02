@@ -57,6 +57,8 @@ class Routines:
             self.log.error("unknown routine %s", name)
             done(False)
             return
+        if self.running and self._abort.is_set():
+            self._thread.join(timeout=2.0)          # an aborted routine still unwinding: give it a moment
         if self.running:
             self.log.warning("routine %s requested while %s is running; ignored", name, self.current)
             done(False)
@@ -73,6 +75,13 @@ class Routines:
             self.log.info("routine %s: ABORT requested", self.current)
         self._abort.set()
 
+    def abort_and_join(self, timeout: float = 3.0) -> bool:
+        """Abort and wait for the routine thread to unwind; False if it is still alive after `timeout`."""
+        self.abort()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
+        return not self.running
+
     def _run(self, name: str, done: Callable[[bool], None]) -> None:
         ok = False
         t0 = time.time()
@@ -88,9 +97,9 @@ class Routines:
         except Exception as e:  # noqa: BLE001 - a failed routine must never kill the app
             self.log.error("routine %s: failed: %r", name, e, exc_info=True)
         finally:
-            self.current = None
             self.status = ""
             done(ok)
+            self.current = None
 
     # -- routines -------------------------------------------------------------------
     def _home(self) -> None:

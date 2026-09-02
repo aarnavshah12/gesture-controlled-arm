@@ -56,6 +56,18 @@ class VizTest(unittest.TestCase):
             _, _, _, img = self.render(mode=mode, hand=None, pred=None, trail=[])
             self.assertTrue(img[20:100, :].any(), mode)
 
+    def test_status_strip_fits_the_frame(self):
+        parts = ["DRY RUN", "29.9 fps", "infer 200.0 ms", "hand 10.0 ms", "arm (-115, -175, 150)",
+                 "open-palm conf 0.87", "debounce 3/5", "brightness UNCONFIRMED"]
+        for w in (1280, 1920, 960):
+            sc, kept = viz.status_layout(w, parts)
+            self.assertLessEqual(viz._text_w("   |   ".join(kept), sc, 1)[0], w - 28)
+            self.assertTrue(any("conf" in k for k in kept), kept)
+        img = np.zeros((720, 1280, 3), np.uint8)
+        viz.draw_status(img, fps=29.9, infer_ms=200.0, hand_ms=10.0, arm_xyz=(-115, -175, 150), conf=0.87,
+                        gesture="open-palm", extra="debounce 3/5", dry_run=True, warn="brightness UNCONFIRMED")
+        self.assertTrue(img[690:715, 1000:1270].any())     # text reaches the right side but stays inside
+
     def test_toasts_expire(self):
         t = viz.Toasts(1.0)
         t.add("X", t=0.0)

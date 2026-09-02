@@ -158,6 +158,50 @@ class ControllerTest(unittest.TestCase):
         c._tick(0.2)
         self.assertEqual(c.refused, 2)
 
+    def test_stale_resume_is_ignored_after_freeze(self):
+        arm, c = self.make()
+        c.resume(recenter=False)
+        epoch = c.epoch
+        c.freeze()
+        self.assertFalse(c.resume(recenter=True, epoch=epoch))
+        self.assertTrue(c.frozen)
+        self.assertFalse(c.enabled)
+        self.assertTrue(c.resume(recenter=True, epoch=c.epoch))
+        self.assertFalse(c.frozen)
+
+    def test_pause_also_invalidates_queued_resume(self):
+        arm, c = self.make()
+        epoch = c.epoch
+        c.pause()
+        self.assertFalse(c.resume(recenter=True, epoch=epoch))
+        self.assertFalse(c.enabled)
+
+    def test_unknown_position_never_streams_live(self):
+        class LiveArm(FakeArm):
+            dry_run = False
+        arm, c = self.make(LiveArm())
+        self.assertIsNone(c.sync_to_arm())
+        self.assertFalse(c.position_known)
+        self.assertFalse(c.resume(recenter=False))
+        c.enabled = True                      # even if something enabled it
+        c.update_hand((0.5, 0.5), 0.0)
+        c.update_hand((0.9, 0.5), 0.1)
+        c._tick(0.1)
+        self.assertEqual(arm.streams, [])
+        arm.read_xyz = lambda: (0, -175, 150)
+        self.assertEqual(c.sync_to_arm(), (0, -175, 150))
+        self.assertTrue(c.resume(recenter=False))
+
+    def test_hand_loss_resets_recenter_timer(self):
+        arm, c = self.make()
+        c.resume(recenter=True)
+        c.update_hand((0.5, 0.5), 0.0)
+        c.update_hand(None, 0.1)
+        c.update_hand((0.5, 0.5), 0.2)
+        self.assertTrue(c.recenter_required)  # the hold restarted at 0.2, not 0.0
+        c.update_hand((0.5, 0.5), 0.2 + config.RECENTER_HOLD_S + 0.01)
+        self.assertFalse(c.recenter_required)
+
     def test_targets_always_inside_box(self):
         arm, c = self.make()
         c.resume(recenter=False)

@@ -47,6 +47,8 @@ class NullArm:
     def __init__(self, log):
         self.log = log
         self.commanded = None
+        self.inhibited = False
+        self.gripping = False
 
     def connect(self):
         self.log.warning("arm: block picker not found -> NullArm (dry-run only, nothing is sent anywhere)")
@@ -69,7 +71,11 @@ class NullArm:
         self.move_to(*(config.MIRROR_ORIGIN_XYZ_MM), ms)
 
     def halt(self):
+        self.inhibited = True
         self.log.info("[dry-run] arm: HALT at %s", self.commanded)
+
+    def release_halt(self):
+        self.inhibited = False
 
     def grip(self):
         self.log.info("[dry-run] arm: GRIP")
@@ -106,16 +112,29 @@ class ArmOps(threading.Thread):
             except Exception as e:  # noqa: BLE001
                 self.log.error("arm op %s failed: %r", label, e)
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 3.0) -> None:
         self.q.put((None, "stop"))
+        self.join(timeout=timeout)
 
 
 class AppActions(Actions):
-    def __init__(self, arm, controller: MotionController, routines, toasts: viz.Toasts, ops: ArmOps, log):
+    """Everything the state machine can do, with the threading rules in one place:
+
+    - freeze()/pause_mirror() are synchronous (UI thread) and bump the controller's epoch;
+    - grip/release/resume run on the ArmOps thread in order; a resume carries the epoch it was decided
+      under and is ignored by the controller if a freeze/pause happened since;
+    - routine completion is queued and delivered on the UI thread by drain(), so the state machine is
+      only ever mutated from one thread.
+    """
+
+    def __init__(self, arm, controller: MotionController, routines, toasts: viz.Toasts, ops: ArmOps, log, box=None):
         self.arm, self.controller, self.routines, self.toasts, self.ops, self.log = arm, controller, routines, toasts, ops, log
+        self.box = box
+        self.sm = None                 # set by main() once the StateMachine exists
+        self.done_q: queue.Queue = queue.Queue()
 
     def freeze(self) -> None:
-        self.controller.freeze()          # immediate: halts the arm on the UI thread
+        self.controller.freeze()          # immediate: halts + inhibits the arm on the UI thread
 
     def release(self) -> None:
         self.ops.submit(self.arm.release, "release")
@@ -124,19 +143,46 @@ class AppActions(Actions):
         self.ops.submit(self.arm.grip, "grip")
 
     def resume_mirror(self, recenter: bool) -> None:
+        epoch = self.controller.epoch
+
         def _resume():
-            self.controller.sync_to_arm()
-            self.controller.resume(recenter)
+            if self.sm is not None and self.sm.mode != MIRROR:
+                self.log.warning("resume-mirror skipped: mode is %s", self.sm.mode)
+                return
+            pos = self.controller.sync_to_arm()
+            if pos is not None and self.box is not None and pos[2] < self.box[2][0] - 1.0:
+                # below the mirror box floor (e.g. a fist during PICK's descent): go straight up first,
+                # never sideways at block height. A refused rise leaves mirroring disabled.
+                x, y = pos[0], pos[1]
+                zf = self.box[2][0]
+                self.log.info("resume-mirror: arm at z=%.0f below the box floor %.0f -> vertical rise first", pos[2], zf)
+                try:
+                    self.arm.release_halt()
+                    self.arm.move_to(x, y, zf, 800)
+                except Exception as e:  # noqa: BLE001
+                    self.log.error("resume-mirror: rise refused (%r); mirroring stays disabled - thumbs-up HOME", e)
+                    return
+                self.controller.sync_to_arm()
+            self.controller.resume(recenter, epoch=epoch)
         self.ops.submit(_resume, "resume-mirror")   # after any queued release, in order
 
     def pause_mirror(self) -> None:
         self.controller.pause()
 
     def start_routine(self, name: str, done) -> None:
-        self.routines.start(name, done)
+        self.routines.start(name, lambda ok: self.done_q.put((done, ok)))
 
     def abort_routine(self) -> None:
         self.routines.abort()
+
+    def drain(self) -> None:
+        """Deliver routine completions on the caller's (UI) thread."""
+        while True:
+            try:
+                done, ok = self.done_q.get_nowait()
+            except queue.Empty:
+                return
+            done(ok)
 
 
 def parse_args(argv=None):
@@ -203,10 +249,12 @@ def main(argv=None) -> int:
     routines = Routines(arm, dry_run=args.dry_run, mac_camera_index=cam.index)
     toasts = viz.Toasts()
     ops = ArmOps(log)
-    actions = AppActions(arm, controller, routines, toasts, ops, log)
+    actions = AppActions(arm, controller, routines, toasts, ops, log, box=box)
     sm = StateMachine(actions)
+    actions.sm = sm
     deb = Debouncer(args.debounce, args.conf)
-    controller.resume(recenter=True)
+    if not controller.resume(recenter=True):
+        log.error("mirroring not enabled at start (arm position unknown); thumbs-up HOME will re-sync")
 
     clean = args.clean
     fullscreen = not args.windowed
@@ -223,6 +271,7 @@ def main(argv=None) -> int:
     img = None
     i = 0
     bad_reads = 0
+    missing = 0
     try:
         while True:
             frame = cam.read()
@@ -243,14 +292,19 @@ def main(argv=None) -> int:
             # continuous stream: landmarks every frame -> smoothed wrist -> controller
             hand = tracker.process(frame, t)
             if hand is not None:
+                missing = 0
                 w = hand.wrist_norm
                 a = config.WRIST_SMOOTHING
                 ema = w if ema is None else (ema[0] + a * (w[0] - ema[0]), ema[1] + a * (w[1] - ema[1]))
                 trail.append((ema[0] * frame.shape[1], ema[1] * frame.shape[0]))
                 controller.update_hand(ema, t)
             else:
+                missing += 1
                 if trail:
                     trail.popleft()
+                if missing > 3:
+                    ema = None          # re-seed at the real wrist when the hand comes back: no phantom streak
+                    trail.clear()
                 controller.update_hand(None, t)
 
             # command channel: gesture model every Nth frame in the worker -> debounce -> events
@@ -263,11 +317,16 @@ def main(argv=None) -> int:
                     text, colour = TOAST[ev.name]
                     if ev.name == "RELEASE" and sm.mode == FROZEN:
                         text = "RESUME"
-                    toasts.add(text, colour, t)
-                    sm.on_event(ev)
+                    mode_before = sm.mode
+                    if sm.on_event(ev):
+                        toasts.add(text, colour, t)
+                    elif ev.name != "FREEZE":
+                        toasts.add(f"{text} ignored ({mode_before.lower()})", viz.GREY, t)
+            actions.drain()   # routine completions, delivered on this thread
 
             # overlay
-            pred = last_res.top if (last_res is not None and t - last_res.t < 1.0) else None
+            # a box older than ~2.5 inference periods is stale: the hand has moved on
+            pred = last_res.top if (last_res is not None and t - last_res.t < max(0.35, 2.5 * last_res.ms / 1000.0)) else None
             progress = deb.progress if (pred is not None and pred.cls == deb.cls) else 0.0
             snap = controller.snapshot()
             if sm.mode == FROZEN:
@@ -280,10 +339,16 @@ def main(argv=None) -> int:
                 sub = "no hand - holding"
             else:
                 sub = ""
-            arm_xyz = snap["actual"] if snap["actual"] is not None else snap["commanded"]
+            if sm.mode == ROUTINE:
+                arm_xyz = getattr(arm, "commanded", None)      # the routine thread keeps it current
+            else:
+                arm_xyz = snap["actual"] if snap["actual"] is not None else snap["commanded"]
+            warn = "" if config.BRIGHTNESS_CONFIRMED else "brightness UNCONFIRMED"
+            if not snap["position_known"]:
+                warn = "arm position UNKNOWN"
             status = dict(fps=fps, infer_ms=(last_res.ms if last_res else 0.0), hand_ms=tracker.last_ms,
                           arm_xyz=arm_xyz, conf=(pred.conf if pred else None), gesture=(pred.cls if pred else None),
-                          extra=f"debounce {deb.count}/{deb.n}", dry_run=args.dry_run)
+                          extra=f"debounce {deb.count}/{deb.n}", dry_run=args.dry_run, warn=warn)
             target_map = None
             if not clean or args.dry_run:
                 target_map = dict(box=box, target=snap["target"], commanded=snap["commanded"], actual=snap["actual"],
@@ -309,7 +374,10 @@ def main(argv=None) -> int:
                     cv2.setWindowProperty(config.WINDOW_NAME, cv2.WND_PROP_FULLSCREEN,
                                           cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
                 if key == ord("r"):
-                    controller.resume(recenter=True)
+                    if sm.mode == MIRROR:
+                        actions.resume_mirror(recenter=True)
+                    else:
+                        log.info("key r ignored: mode %s (open-palm resumes from FROZEN)", sm.mode)
             if args.frames and i >= args.frames:
                 break
     except KeyboardInterrupt:
@@ -317,7 +385,7 @@ def main(argv=None) -> int:
     finally:
         log.info("shutting down: frames=%d fps=%.1f detector submitted=%d skipped=%d errors=%d controller=%s",
                  i, fps, worker.submitted, worker.skipped_busy, worker.errors, controller.snapshot())
-        routines.abort()
+        unwound = routines.abort_and_join(3.0)
         controller.stop()
         worker.stop()
         ops.stop()
@@ -327,8 +395,14 @@ def main(argv=None) -> int:
         try:
             if not args.dry_run and getattr(arm, "cleared", False):
                 arm.halt()
-                arm.release()
-                arm.home()
+                arm.release()                      # a held object is set down where the arm is
+                if sm.mode == FROZEN:
+                    log.warning("session ended FROZEN: arm left where it halted (vented), not homed")
+                elif not unwound:
+                    log.error("routine thread still alive after 3 s: skipping the parking move")
+                else:
+                    arm.release_halt()
+                    arm.home()
         except BaseException as e:  # noqa: BLE001 - always release the port
             log.error("cleanup: %r", e)
         finally:

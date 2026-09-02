@@ -108,6 +108,50 @@ class GestureArmTest(unittest.TestCase):
         self.assertEqual((x, y), (int(xhi), int(yhi)))
         self.assertGreaterEqual(z, garm._bp.config.TABLE_Z_MM)
 
+    def test_halt_inhibits_motion_until_released(self):
+        a = self.live_arm(xyz=(0, -175, 150))
+        a.halt()
+        self.assertTrue(a.inhibited)
+        with self.assertRaises(garm.ArmError):
+            a.stream_to(5, -175, 150)
+        with self.assertRaises(garm.ArmError):
+            a.move_to(5, -175, 150, 500)
+        moves = [f for f in a._ser.written if f[2] == 0x03]
+        self.assertEqual(len(moves), 1)                 # only the halt frame went out
+        a.suction(True)                                 # nozzle frames are still allowed (release from FROZEN)
+        self.assertEqual([f for f in a._ser.written if f[2] == 0x07][-1][4], 1)
+        a.release_halt()
+        a.stream_to(5, -175, 150)
+        self.assertEqual(len([f for f in a._ser.written if f[2] == 0x03]), 2)
+
+    def test_halt_with_unknown_position_sends_nothing(self):
+        a = self.live_arm()
+        a._ser.xyz = None
+        a._ser.write = lambda b: a._ser.written.append(bytes(b))   # never answers a read
+        a.commanded = (100.0, -200.0, 150.0)
+        a.halt()
+        self.assertTrue(a.inhibited)
+        self.assertEqual([f for f in a._ser.written if f[2] == 0x03], [])   # no blind stop target
+
+    def test_move_to_observes_abort_before_sending(self):
+        a = self.live_arm()
+        class Stop(Exception):
+            pass
+        def tick():
+            raise Stop()
+        a.tick = tick
+        with self.assertRaises(Stop):
+            a.move_to(0, -175, 150, 500)
+        self.assertEqual([f for f in a._ser.written if f[2] == 0x03], [])
+
+    def test_suction_state_tracked_from_driver_calls(self):
+        a = self.live_arm()
+        garm._bp.config.VENT_S = 0.0
+        a.suction(True)
+        self.assertTrue(a.gripping)
+        a.vent()
+        self.assertFalse(a.gripping)
+
     def test_grip_release_frames(self):
         a = self.live_arm()
         garm._bp.config.VENT_S = 0.0   # do not sleep in tests

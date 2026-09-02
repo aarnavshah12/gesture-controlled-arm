@@ -96,6 +96,14 @@ class RoutinesTest(unittest.TestCase):
         r.abort()
         self.assertTrue(first.wait(2.0))
 
+    def test_abort_and_join(self):
+        arm = FakeArm(step_s=0.3)
+        r = Routines(arm, dry_run=True, log=silent_logger())
+        r.start("FLOURISH", lambda ok: None)
+        time.sleep(0.05)
+        self.assertTrue(r.abort_and_join(2.0))
+        self.assertFalse(r.running)
+
     def test_unknown_routine(self):
         r = Routines(FakeArm(), dry_run=True, log=silent_logger())
         got = []

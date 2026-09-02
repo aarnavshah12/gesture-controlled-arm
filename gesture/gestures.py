@@ -147,24 +147,24 @@ class StateMachine:
         self.log.info("mode %s -> %s (%s)", frm, to, why)
 
     # -- events -------------------------------------------------------------------
-    def on_event(self, ev: Event) -> None:
+    def on_event(self, ev: Event) -> bool:
+        """Handle one debounced event. Returns True if it was acted on, False if ignored in this mode."""
         self.last_event = ev
         self.log.info("EVENT %s from %s %.2f in mode %s", ev.name, ev.gesture, ev.conf, self.mode)
         if ev.name == "FREEZE":
-            self._freeze(ev)
-            return
+            return self._freeze(ev)
         if self.mode == FROZEN:
             if ev.name == "RELEASE":
                 self.actions.release()
                 self.routine = None
                 self._set_mode(MIRROR, "open-palm released the freeze")
                 self.actions.resume_mirror(recenter=True)
-            else:
-                self.log.info("event %s ignored: FROZEN (only open-palm resumes)", ev.name)
-            return
+                return True
+            self.log.info("event %s ignored: FROZEN (only open-palm resumes)", ev.name)
+            return False
         if self.mode == ROUTINE:
             self.log.info("event %s ignored: routine %s in progress (fist aborts)", ev.name, self.routine)
-            return
+            return False
         # MIRROR
         if ev.name == "GRIP":
             self.actions.grip()
@@ -174,17 +174,20 @@ class StateMachine:
             self._start_routine(ev.name)
         else:
             self.log.warning("event %s has no handler", ev.name)
+            return False
+        return True
 
-    def _freeze(self, ev: Event) -> None:
+    def _freeze(self, ev: Event) -> bool:
         if self.mode == FROZEN:
             self.log.info("already FROZEN")
-            return
+            return False
         was_routine = self.routine if self.mode == ROUTINE else None
         self._set_mode(FROZEN, f"fist{' during ' + was_routine if was_routine else ''}")
-        self.actions.freeze()          # halt the arm first
         if was_routine:
-            self.actions.abort_routine()
+            self.actions.abort_routine()   # flag first: the routine thread must not send another move
+        self.actions.freeze()              # then halt (and inhibit) the arm
         self.actions.pause_mirror()
+        return True
 
     def _start_routine(self, name: str) -> None:
         self._routine_seq += 1

@@ -168,20 +168,45 @@ class Toasts:
 
 # ---------------------------------------------------------------- 6. status strip
 
+def status_layout(width: int, parts: list[str], scale: float = 0.62, min_scale: float = 0.42,
+                  gap: str = "   |   ") -> tuple[float, list[str]]:
+    """Pick a text scale (and, failing that, drop the least important trailing parts) so the strip fits."""
+    parts = list(parts)
+    while True:
+        sc = scale
+        while sc >= min_scale:
+            if _text_w(gap.join(parts), sc, 1)[0] <= width - 28:
+                return sc, parts
+            sc = round(sc - 0.04, 2)
+        if len(parts) <= 2:
+            return min_scale, parts
+        # drop from the end but keep the gesture/confidence field (spec item 6) as long as possible
+        drop = -1 if not parts[-1].lstrip().startswith(("fps", "infer")) and "conf" not in parts[-1] else -2
+        del parts[drop]
+
+
 def draw_status(img, *, fps: float, infer_ms: float, hand_ms: float, arm_xyz, conf: float | None,
-                gesture: str | None, extra: str = "", dry_run: bool = False):
+                gesture: str | None, extra: str = "", dry_run: bool = False, warn: str = ""):
     h, w = img.shape[:2]
     bar = 44
     translucent(img, 0, h - bar, w, h, alpha=0.75)
     xyz = "arm (%s)" % (", ".join("%.0f" % v for v in arm_xyz) if arm_xyz else "  -  ,  -  ,  -  ")
     conf_s = "conf %.2f" % conf if conf is not None else "conf  -  "
     parts = [f"{fps:4.1f} fps", f"infer {infer_ms:5.1f} ms", f"hand {hand_ms:4.1f} ms", xyz,
-             f"{(gesture or '-'):>10s} {conf_s}"]
+             f"{(gesture or '-')} {conf_s}"]
     if dry_run:
         parts.insert(0, "DRY RUN")
     if extra:
         parts.append(extra)
-    _text(img, "   |   ".join(parts), (14, h - 14), 0.62, DRY if dry_run else WHITE, 1)
+    if warn:
+        parts.append(warn)
+    gap = "   |   "
+    sc, parts = status_layout(w, parts, gap=gap)
+    _text(img, gap.join(parts), (14, h - 14), sc, DRY if dry_run else WHITE, 1)
+    if warn:
+        tw, _ = _text_w(gap.join(parts), sc, 1)
+        ww, _ = _text_w(warn, sc, 1)
+        cv2.rectangle(img, (14 + tw - ww - 6, h - bar + 6), (14 + tw + 6, h - 4), (68, 68, 239), 2)
 
 
 # ---------------------------------------------------------------- 7. planned target map (dry-run / mirroring)
@@ -191,7 +216,7 @@ def draw_target_map(img, box, target, commanded, actual=None, label="planned tar
     h, w = img.shape[:2]
     (xlo, xhi), (ylo, yhi), (zlo, zhi) = box
     mw, mh = 220, 150
-    x0, y0 = w - mw - 56, h - mh - 60
+    x0, y0 = w - mw - 56, h - mh - 64
     translucent(img, x0 - 8, y0 - 26, x0 + mw + 44, y0 + mh + 8, alpha=0.7)
     _text(img, label, (x0, y0 - 8), 0.55, WHITE, 1)
     cv2.rectangle(img, (x0, y0), (x0 + mw, y0 + mh), GREY, 1)

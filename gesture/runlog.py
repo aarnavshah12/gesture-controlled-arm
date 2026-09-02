@@ -43,6 +43,9 @@ def start_run(name: str = "run", level: int = logging.INFO, quiet: bool = False)
         lg.propagate = False
     log = logging.getLogger(LOGGER)
     log.info("run=%s name=%s log=%s", _run_stamp, name, log_path)
+    from . import bp  # late import: bp imports config only, no cycle at module load
+
+    bp.sync_logging()
     return log
 
 

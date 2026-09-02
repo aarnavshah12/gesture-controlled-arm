@@ -52,7 +52,8 @@ PICK, its `calibration.npy`, model and overhead camera. Nothing from it is copie
 .venv/bin/python gesture_arm.py --record demo.mp4
 ```
 
-Keys: `q`/Esc quit, `c` toggle the status strip, `f` toggle full screen, `r` re-centre the hand reference.
+Keys: `q`/Esc quit, `c` toggle the status strip, `f` toggle full screen, `r` re-centre the hand reference
+(only in MIRROR; it never un-freezes).
 
 Mirroring starts when your hand sits in the centre of the frame for a moment (the banner says so). Then
 hand left/right = arm x, hand up/down = arm z, inside a fixed box in front of the arm. No hand for 1 s =
@@ -79,8 +80,11 @@ the arm holds. After HOME or any routine you re-centre again.
   reach limits and above table Z; targets that would need more than 88 % of the arm's stretch are pulled
   back (the firmware silently ignores those). The driver checks again before any byte is sent.
 - The commanded point moves at most 150 mm/s; the control loop runs at a fixed 10 Hz regardless of camera FPS.
-- `fist` halts the arm at its read-back position within one control tick and aborts routines; only
-  `open-palm` resumes. No hand for 1 s = hold.
+- `fist` halts the arm at its read-back position within one control tick, aborts routines and inhibits every
+  further move frame at the serial layer until `open-palm` resumes. No hand for 1 s = hold. If the arm's
+  position cannot be read, mirroring stays disabled (the strip says so) until thumbs-up HOME re-syncs.
+- A fist while PICK is carrying a block keeps the pump on; the following `open-palm` vents it where the arm
+  stopped (logged as a warning). Quitting while FROZEN vents and leaves the arm where it halted.
 - The first live run of a session asks `Workspace clear? [y/N]` before anything moves. `--dry-run` never
   opens the serial port. Do not leave it running unattended.
 - Every accepted/rejected prediction (class, confidence, debounce count), every event, every mode transition

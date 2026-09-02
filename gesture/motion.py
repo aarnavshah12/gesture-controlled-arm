@@ -120,6 +120,11 @@ class MotionController(threading.Thread):
         self.holding = False
         self.actual = None
         self.actual_t = 0.0
+        self.epoch = 0                  # bumped by freeze()/pause(): a resume queued before is stale
+        # live: never stream from a guessed position (sync_to_arm() must succeed first); dry-run may
+        # start from the origin, there is nothing to hit
+        self.position_known = bool(getattr(arm, "dry_run", False))
+        self._warned_unknown = False
         # stats
         self.ticks = 0
         self.late_ticks = 0
@@ -134,6 +139,7 @@ class MotionController(threading.Thread):
         """Called every camera frame with the (smoothed) wrist in normalised coords, or None."""
         with self._lock:
             if wrist_norm is None:
+                self._recenter_since = None     # the centre-hold restarts when the hand comes back
                 return
             self.last_hand_t = t
             if self.holding:
@@ -158,25 +164,48 @@ class MotionController(threading.Thread):
             self.target = hand_to_target(wrist_norm, self.hand_ref, self.origin, self.box)
 
     # -- mode changes ---------------------------------------------------------------
-    def sync_to_arm(self) -> None:
-        """Adopt the arm's real position as the commanded point (after a routine / at start)."""
+    def sync_to_arm(self):
+        """Adopt the arm's real position as the commanded point (after a routine / at start).
+
+        Returns the position, or None when it is unknown - in which case a live controller refuses to
+        stream (streaming from a guessed point could traverse the whole workspace in one command).
+        """
         pos = None
-        if not getattr(self.arm, "dry_run", False):
-            try:
-                pos = self.arm.read_xyz()
-            except Exception as e:  # noqa: BLE001
-                self.log.warning("mirror: read_xyz failed during sync: %r", e)
+        dry = getattr(self.arm, "dry_run", False)
+        if not dry:
+            for _ in range(3):
+                try:
+                    pos = self.arm.read_xyz()
+                except Exception as e:  # noqa: BLE001
+                    self.log.warning("mirror: read_xyz failed during sync: %r", e)
+                if pos is not None:
+                    break
         if pos is None:
             pos = getattr(self.arm, "commanded", None)
         with self._lock:
             if pos is not None:
                 self.commanded = tuple(float(v) for v in pos)
                 self.actual, self.actual_t = self.commanded, time.time()
+                self.position_known = True
+            else:
+                self.position_known = bool(dry)   # dry-run may start from the origin; live may not
             self.target = self.commanded if self.commanded is not None else self.origin
-        self.log.info("mirror: synced to arm position %s", self.commanded)
+        if pos is None and not dry:
+            self.log.error("mirror: arm position UNKNOWN (no read-back); mirroring stays disabled until a "
+                           "sync succeeds (thumbs-up HOME re-syncs)")
+        else:
+            self.log.info("mirror: synced to arm position %s", self.commanded)
+        return pos
 
-    def resume(self, recenter: bool = True) -> None:
+    def resume(self, recenter: bool = True, epoch: int | None = None) -> bool:
+        """Enable mirroring. A resume decided before a later freeze()/pause() (epoch mismatch) is ignored."""
         with self._lock:
+            if epoch is not None and epoch != self.epoch:
+                self.log.warning("mirror: stale resume ignored (epoch %d != %d)", epoch, self.epoch)
+                return False
+            if not self.position_known:
+                self.log.error("mirror: resume refused: arm position unknown")
+                return False
             self.enabled = True
             self.frozen = False
             self.holding = False
@@ -185,17 +214,23 @@ class MotionController(threading.Thread):
             if recenter:
                 self.hand_ref = None
             self.target = self.commanded if self.commanded is not None else self.origin
+        release = getattr(self.arm, "release_halt", None)
+        if release is not None:
+            release()
         self.log.info("mirror: resumed (recenter=%s)", recenter)
+        return True
 
     def pause(self) -> None:
         with self._lock:
             self.enabled = False
+            self.epoch += 1
         self.log.info("mirror: paused")
 
     def freeze(self) -> None:
         with self._lock:
             self.enabled = False
             self.frozen = True
+            self.epoch += 1
         self.log.info("mirror: FREEZE -> halting arm")
         try:
             self.arm.halt()
@@ -219,7 +254,7 @@ class MotionController(threading.Thread):
                 "recenter": self.recenter_required, "target": self.target, "commanded": self.commanded,
                 "actual": self.actual, "ticks": self.ticks, "late": self.late_ticks,
                 "commands": self.commands, "refused": self.refused, "detours": self.detours,
-                "blocked": self.blocked,
+                "blocked": self.blocked, "epoch": self.epoch, "position_known": self.position_known,
             }
 
     def run(self) -> None:
@@ -232,6 +267,7 @@ class MotionController(threading.Thread):
                 continue
             if now - next_t > self.period:
                 self.late_ticks += 1
+                next_t = now            # never replay missed ticks back-to-back (that would burst commands)
             next_t += self.period
             self.ticks += 1
             self._tick(time.time())
@@ -257,6 +293,11 @@ class MotionController(threading.Thread):
                 if not self.holding:
                     self.holding = True
                     self.log.info("mirror: no hand for %.1fs -> holding position", config.NO_HAND_HOLD_S)
+                return
+            if not self.position_known:
+                if not self._warned_unknown:
+                    self._warned_unknown = True
+                    self.log.error("mirror: not streaming: arm position unknown")
                 return
             prev = self.commanded
             cur = prev if prev is not None else self.origin

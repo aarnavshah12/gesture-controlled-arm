@@ -43,10 +43,18 @@ class StateMachineTest(unittest.TestCase):
         self.sm = StateMachine(self.a, log=silent_logger())
 
     def test_grip_release_in_mirror(self):
-        self.sm.on_event(ev("GRIP"))
-        self.sm.on_event(ev("RELEASE"))
+        self.assertTrue(self.sm.on_event(ev("GRIP")))
+        self.assertTrue(self.sm.on_event(ev("RELEASE")))
         self.assertEqual(self.a.calls, ["grip", "release"])
         self.assertEqual(self.sm.mode, MIRROR)
+
+    def test_ignored_events_report_false(self):
+        self.assertTrue(self.sm.on_event(ev("FREEZE")))
+        self.assertFalse(self.sm.on_event(ev("FREEZE")))      # already frozen
+        self.assertFalse(self.sm.on_event(ev("GRIP")))
+        self.assertTrue(self.sm.on_event(ev("RELEASE")))
+        self.assertTrue(self.sm.on_event(ev("HOME")))
+        self.assertFalse(self.sm.on_event(ev("PICK")))        # routine in progress
 
     def test_freeze_blocks_everything_but_open_palm(self):
         self.sm.on_event(ev("FREEZE", "fist"))
@@ -85,7 +93,7 @@ class StateMachineTest(unittest.TestCase):
         self.sm.on_event(ev("FLOURISH"))
         self.sm.on_event(ev("FREEZE", "fist"))
         self.assertEqual(self.sm.mode, FROZEN)
-        self.assertEqual(self.a.calls, ["pause", "start:FLOURISH", "freeze", "abort", "pause"])
+        self.assertEqual(self.a.calls, ["pause", "start:FLOURISH", "abort", "freeze", "pause"])
         _, done = self.a.pending.pop()
         done(False)                      # the aborted routine reports back
         self.assertEqual(self.sm.mode, FROZEN)   # still frozen: only open-palm resumes

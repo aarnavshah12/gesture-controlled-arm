@@ -73,7 +73,22 @@ def load() -> types.SimpleNamespace:
             raise BlockPickerMissing(f"{name} resolved to {mod.__file__}, expected a file under {d}")
         setattr(ns, name, mod)
     _ns = ns
+    sync_logging()
     return ns
+
+
+def sync_logging() -> None:
+    """Point the block picker's runlog at THIS session (log dir, run stamp, frames dir).
+
+    Its PickLoop calls its own runlog.save_frame(); if that module has no run yet it would call its
+    start_run(), which clears the shared "blockpicker" logger's handlers and opens a second log file.
+    """
+    if _ns is None:
+        return
+    from . import runlog as grl
+    _ns.config.LOG_DIR = config.LOG_DIR
+    _ns.runlog._run_stamp = grl._run_stamp
+    _ns.runlog._frames_dir = grl._frames_dir
 
 
 def rig_values() -> dict:
