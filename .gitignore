@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+logs/
+.env
+.env.*
+.DS_Store
+.claude/settings.local.json
+models/*.task
+*.mp4
+*.mov
+*.MOV

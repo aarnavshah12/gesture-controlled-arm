@@ -1,0 +1,7 @@
+# Pinned 2026-09-02 on macOS 26 / Apple M5 / Python 3.12 (uv venv). mediapipe 1.0.1 aborts in its Metal
+# helper on this Mac (CPU delegate too); 0.10.21 works. inference 1.5.1 loads the RF-DETR model locally.
+opencv-python==4.12.0.88
+numpy==1.26.4
+mediapipe==0.10.21
+inference==1.5.1
+pyserial==3.5
