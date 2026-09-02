@@ -1,0 +1,104 @@
+# Gesture Arm
+
+A hand in front of the Mac's camera drives a Hiwonder MaxArm. MediaPipe hand landmarks (21 points, every
+frame) decide **where** the arm goes: the wrist is mirrored onto the end effector. An RF-DETR gesture
+model trained on [Roboflow](https://roboflow.com) and run locally decides **what** the arm does: six
+gestures, debounced into events. Everything runs on the Mac; the arm's own firmware does the inverse
+kinematics and only ever receives end-effector (x, y, z) and suction on/off over USB serial.
+
+```
+Mac camera ─► brightness fix ─┬─► MediaPipe landmarks (every frame) ─► smoothed wrist ─► 10 Hz mirror loop ─┐
+                              └─► RF-DETR gesture model (every 2nd frame, worker thread) ─► debounce ─► events ─┤
+                                                                                                                ▼
+                                                                          state machine (MIRROR / FROZEN / ROUTINE) ─► MaxArm
+```
+
+The demo is the overlay: the gesture box with its confidence pill and charging arc, the full hand skeleton,
+the wrist trail, the mode banner, event toasts and a status strip, all drawn every frame by `gesture/viz.py`.
+
+## Gestures
+
+| Gesture (model class) | Event | What the arm does |
+|---|---|---|
+| `fist` | FREEZE | Dead-man switch. Halts where it is, ignores everything except `open-palm`. Aborts any routine. |
+| `open-palm` | RELEASE / RESUME | Opens the "gripper" (vents the suction cup). The only way out of FROZEN. |
+| `pinch` | GRIP | Closes the "gripper" (suction pump on). |
+| `thumbs-up` | HOME | Goes to the home pose. Mirroring resumes once your hand is back in the centre of the frame. |
+| `point` | PICK | Runs the block picker's pick-and-place once (overhead camera, its model, its calibration). |
+| `peace` | FLOURISH | A scripted wave and nod. |
+
+An event fires after 5 consecutive accepted predictions above 0.7 confidence (`gesture/config.py`), once
+per hold; a flickering prediction fires nothing. The arc on the box shows the charge.
+
+## Setup
+
+```bash
+./setup.sh                                   # uv venv (Python 3.12) + pinned deps + MediaPipe hand model
+export ROBOFLOW_API_KEY=...                  # or put ROBOFLOW_API_KEY=... in a gitignored .env
+cd tests && ../.venv/bin/python -m unittest  # 40 offline tests, no hardware needed
+```
+
+The block-picker project must be at `~/Documents/Defect-detect bot` (`gesture/config.py: BLOCK_PICKER_DIR`).
+It supplies the arm driver, the rig's measured values (serial port, reach limits, home, table Z) and, for
+PICK, its `calibration.npy`, model and overhead camera. Nothing from it is copied or re-implemented.
+
+## Run
+
+```bash
+.venv/bin/python gesture_arm.py --dry-run     # full pipeline + full overlay, planned targets drawn, NO motion
+.venv/bin/python gesture_arm.py               # live: asks "Workspace clear?" once, then goes
+.venv/bin/python gesture_arm.py --clean       # no status strip (filming); everything else stays
+.venv/bin/python gesture_arm.py --windowed    # not full screen
+.venv/bin/python gesture_arm.py --record demo.mp4
+```
+
+Keys: `q`/Esc quit, `c` toggle the status strip, `f` toggle full screen, `r` re-centre the hand reference.
+
+Mirroring starts when your hand sits in the centre of the frame for a moment (the banner says so). Then
+hand left/right = arm x, hand up/down = arm z, inside a fixed box in front of the arm. No hand for 1 s =
+the arm holds. After HOME or any routine you re-centre again.
+
+## Bring-up, in the plan's order
+
+1. **Perception** - `--dry-run`, no arm needed. Each of the six gestures should get a correctly labelled box
+   and the full 21-point skeleton at the same time. Set `BRIGHTNESS_ALPHA/BETA` in `gesture/config.py` to
+   the values used when the dataset was collected (`BRIGHTNESS_CONFIRMED = True`).
+2. **State machine** - still `--dry-run`: each gesture fires exactly one `EVENT` line in the log; the toast
+   and the arc show it on screen. Flicker fires nothing.
+3. **Mirroring** - arm plugged in and powered 15 s. `--dry-run` shows the planned target on the map in the
+   corner; then live. Check the mirror box (`MIRROR_*` in config, intersected with the block picker's reach
+   limits) and that a fist freezes instantly.
+4. **Grip / release / home** live.
+5. **Routines** - point (needs the overhead camera and a valid block-picker calibration), peace, and a fist
+   mid-routine.
+6. **Filming** - `--clean`, see `DEMO.md`.
+
+## Safety
+
+- Every commanded target is clamped to the mirror box, which is itself inside the block picker's measured
+  reach limits and above table Z; targets that would need more than 88 % of the arm's stretch are pulled
+  back (the firmware silently ignores those). The driver checks again before any byte is sent.
+- The commanded point moves at most 150 mm/s; the control loop runs at a fixed 10 Hz regardless of camera FPS.
+- `fist` halts the arm at its read-back position within one control tick and aborts routines; only
+  `open-palm` resumes. No hand for 1 s = hold.
+- The first live run of a session asks `Workspace clear? [y/N]` before anything moves. `--dry-run` never
+  opens the serial port. Do not leave it running unattended.
+- Every accepted/rejected prediction (class, confidence, debounce count), every event, every mode transition
+  and every serial frame goes to `logs/<timestamp>.log`.
+
+## Files
+
+| File | What it owns |
+|---|---|
+| `gesture_arm.py` | The loop: camera -> landmarks + detector worker -> debounce -> state machine -> overlay. |
+| `gesture/config.py` | Every tunable and physical value; class strings verbatim from the model. |
+| `gesture/camera.py` | Capture, selfie flip, `cv2.convertScaleAbs` brightness correction. |
+| `gesture/perception.py` | `HandTracker` (MediaPipe), `GestureDetector` (RF-DETR via `inference`), `DetectorWorker`. |
+| `gesture/gestures.py` | `Debouncer`, `StateMachine` (MIRROR / FROZEN / ROUTINE), the `Actions` interface. |
+| `gesture/motion.py` | Mirror math, clamps, velocity cap, the 10 Hz `MotionController`. |
+| `gesture/arm.py` | `GestureArm` over the block picker's driver: `stream_to`, `halt`, `grip`, `release`. |
+| `gesture/routines.py` | HOME, FLOURISH, PICK (the block picker's `PickLoop`, once), abortable. |
+| `gesture/viz.py` | All drawing. |
+| `gesture/bp.py` | Imports the block-picker project as-is. |
+| `gesture/runlog.py` | Per-session log; the block picker's logger writes to the same file. |
+| `tests/` | Offline tests: debounce, state machine, motion, arm (fake serial), overlay. |
