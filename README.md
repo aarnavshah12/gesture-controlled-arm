@@ -85,8 +85,12 @@ default because it is the noisiest axis.
 - `fist` halts the arm at its read-back position within one control tick, aborts routines and inhibits every
   further move frame at the serial layer until `open-palm` resumes. No hand for 1 s = hold. If the arm's
   position cannot be read, mirroring stays disabled (the strip says so) until thumbs-up HOME re-syncs.
-- A fist while PICK is carrying a block keeps the pump on; the following `open-palm` vents it where the arm
-  stopped (logged as a warning). Quitting while FROZEN vents and leaves the arm where it halted.
+- GRAB descends to the block picker's pick height (table Z + block height - cup press = 84 mm), i.e. it assumes
+  a 40 mm kit block under the cup; steer above the block before pinching. While holding, the steering box
+  floor rises to the travel height (160 mm) so the carried block clears the blocks still on the table, and
+  a second pinch is ignored until you place.
+- A fist mid-GRAB or mid-carry keeps the pump on; the following `open-palm` vents where the arm stopped
+  (logged as a warning). Quitting while FROZEN vents and leaves the arm where it halted.
 - The first live run of a session asks `Workspace clear? [y/N]` before anything moves. `--dry-run` never
   opens the serial port. Do not leave it running unattended.
 - Every accepted/rejected prediction (class, confidence, debounce count), every event, every mode transition
