@@ -9,6 +9,10 @@ class FakeActions(Actions):
     def __init__(self):
         self.calls = []
         self.pending = []   # (name, done)
+        self.gripping = False
+
+    def is_gripping(self):
+        return self.gripping
 
     def freeze(self):
         self.calls.append("freeze")
@@ -47,6 +51,41 @@ class StateMachineTest(unittest.TestCase):
         self.assertTrue(self.sm.on_event(ev("RELEASE")))
         self.assertEqual(self.a.calls, ["grip", "release"])
         self.assertEqual(self.sm.mode, MIRROR)
+
+    def test_grab_is_a_routine_and_resumes_without_recentre(self):
+        self.assertTrue(self.sm.on_event(ev("GRAB", "pinch")))
+        self.assertEqual(self.sm.mode, ROUTINE)
+        self.assertEqual(self.a.calls, ["pause", "start:GRAB"])
+        name, done = self.a.pending.pop()
+        done(True)
+        self.assertEqual(self.sm.mode, MIRROR)
+        self.assertEqual(self.a.calls[-1], "resume(False)")     # finger mapping still valid
+
+    def test_second_grab_while_holding_is_refused(self):
+        self.a.gripping = True
+        self.assertFalse(self.sm.on_event(ev("GRAB", "pinch")))
+        self.assertEqual(self.sm.mode, MIRROR)
+        self.assertEqual(self.a.calls, [])
+
+    def test_release_places_when_holding_else_plain_release(self):
+        self.sm.on_event(ev("RELEASE", "open-palm"))
+        self.assertEqual(self.a.calls, ["release"])
+        self.a.gripping = True
+        self.sm.on_event(ev("RELEASE", "open-palm"))
+        self.assertEqual(self.sm.mode, ROUTINE)
+        self.assertEqual(self.sm.routine, "PLACE")
+        self.assertEqual(self.a.calls[-1], "start:PLACE")
+        name, done = self.a.pending.pop()
+        done(True)
+        self.assertEqual(self.a.calls[-1], "resume(False)")
+
+    def test_release_from_frozen_is_plain_even_when_holding(self):
+        self.a.gripping = True
+        self.sm.on_event(ev("FREEZE"))
+        self.sm.on_event(ev("RELEASE"))
+        self.assertEqual(self.sm.mode, MIRROR)
+        self.assertNotIn("start:PLACE", self.a.calls)
+        self.assertIn("release", self.a.calls)
 
     def test_ignored_events_report_false(self):
         self.assertTrue(self.sm.on_event(ev("FREEZE")))

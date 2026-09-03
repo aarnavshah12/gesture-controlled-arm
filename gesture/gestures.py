@@ -21,7 +21,7 @@ from . import config, runlog
 
 MIRROR, FROZEN, ROUTINE = "MIRROR", "FROZEN", "ROUTINE"
 MODES = (MIRROR, FROZEN, ROUTINE)
-ROUTINE_EVENTS = ("HOME", "PICK", "FLOURISH")
+ROUTINE_EVENTS = ("HOME", "PICK", "FLOURISH", "GRAB")   # RELEASE becomes the PLACE routine while holding
 
 
 @dataclass(frozen=True)
@@ -76,6 +76,10 @@ class Debouncer:
             self.log.info("gesture rejected: %s %.2f (null class, count was %d)", pred.cls, pred.conf, self.count)
             self.reset("null")
             return None
+        if pred.cls in config.NO_EVENT_CLASSES:
+            self.log.info("gesture seen: %s %.2f (steering pose, no event; count was %d)", pred.cls, pred.conf, self.count)
+            self.reset("steering pose")
+            return None
         if pred.cls not in config.GESTURE_EVENTS:
             self.log.warning("gesture rejected: unknown class %r %.2f", pred.cls, pred.conf)
             self.reset("unknown class")
@@ -114,6 +118,7 @@ class Actions:
     def freeze(self) -> None: ...
     def release(self) -> None: ...
     def grip(self) -> None: ...
+    def is_gripping(self) -> bool: return False
     def resume_mirror(self, recenter: bool) -> None: ...
     def pause_mirror(self) -> None: ...
     def start_routine(self, name: str, done: Callable[[bool], None]) -> None: ...
@@ -166,10 +171,16 @@ class StateMachine:
             self.log.info("event %s ignored: routine %s in progress (fist aborts)", ev.name, self.routine)
             return False
         # MIRROR
+        if ev.name == "GRAB" and self.actions.is_gripping():
+            self.log.info("event GRAB ignored: already holding something (open-palm to place it)")
+            return False
         if ev.name == "GRIP":
-            self.actions.grip()
+            self.actions.grip()                 # plain "pump on" in place (not mapped by default)
         elif ev.name == "RELEASE":
-            self.actions.release()
+            if self.actions.is_gripping():
+                self._start_routine("PLACE")    # holding something: set it down, don't drop it from height
+            else:
+                self.actions.release()
         elif ev.name in ROUTINE_EVENTS:
             self._start_routine(ev.name)
         else:
@@ -213,7 +224,7 @@ class StateMachine:
         if self.mode == ROUTINE:
             self.routine = None
             self._set_mode(MIRROR, f"{name} {'done' if ok else 'failed'}")
-            self.actions.resume_mirror(recenter=True)
+            self.actions.resume_mirror(recenter=config.RESUME_RECENTER.get(name, True))
 
     @property
     def banner(self) -> str:

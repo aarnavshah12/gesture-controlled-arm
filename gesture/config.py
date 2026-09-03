@@ -25,14 +25,18 @@ API_KEY_ENV = "ROBOFLOW_API_KEY"
 # underscores. The model's own class list is checked against these at start-up.
 CLASSES = ("fist", "open-palm", "pinch", "point", "peace", "thumbs-up")
 NULL_CLASS = "null"  # the model's negative class: never an event; counts as "no gesture"
+# Owner decision 2026-09-03: the arm follows the INDEX FINGERTIP, so `point` is the steering pose and
+# fires nothing; `pinch` = GRAB (descend, suction on, lift at the current spot); `open-palm` = RELEASE,
+# which becomes PLACE (descend, vent, lift) while an object is held. The block picker's autonomous
+# pick routine is still available: map it here, e.g. "peace": "PICK", if it is wanted on a gesture.
 GESTURE_EVENTS = {
     "fist": "FREEZE",
     "open-palm": "RELEASE",
-    "pinch": "GRIP",
+    "pinch": "GRAB",
     "thumbs-up": "HOME",
-    "point": "PICK",
     "peace": "FLOURISH",
 }
+NO_EVENT_CLASSES = ("point",)   # recognised and drawn, never an event, resets the debounce
 CONFIDENCE = 0.7      # a prediction below this is rejected (logged) and resets the debounce
 DEBOUNCE_N = 5        # consecutive accepted predictions of the same class before the event fires
 DETECT_EVERY_N = 2    # run the gesture model on every Nth camera frame (in a worker thread)
@@ -66,8 +70,10 @@ HAND_NUM = 1
 HAND_MIN_DETECTION_CONF = 0.5
 HAND_MIN_PRESENCE_CONF = 0.5
 HAND_MIN_TRACKING_CONF = 0.5
-WRIST_SMOOTHING = 0.35    # EMA weight of the newest wrist sample (1.0 = raw, 0.1 = very smooth)
-WRIST_TRAIL_LEN = 30      # smoothed wrist positions kept for the on-screen trail
+# The landmark that drives the arm: 8 = index fingertip (owner decision 2026-09-03; 0 = wrist).
+TRACK_LANDMARK = 8
+WRIST_SMOOTHING = 0.35    # EMA weight of the newest tracked-point sample (1.0 = raw, 0.1 = very smooth)
+WRIST_TRAIL_LEN = 30      # smoothed tracked-point positions kept for the on-screen trail
 NO_HAND_HOLD_S = 1.0      # no hand for this long in MIRROR = hold position
 
 # --------------------------------------------------------------------------
@@ -92,7 +98,14 @@ MIRROR_GAIN_X_MM = 320.0
 MIRROR_GAIN_Z_MM = 220.0
 MIRROR_X_SIGN = +1.0
 MIRROR_Z_SIGN = -1.0
-MIRROR_DEPTH = False       # v1: y stays at the origin's y (no hand-size -> depth mapping)
+# Depth (arm y, toward/away from the front of the arm) from the apparent palm size: a hand closer to
+# the camera looks bigger. Off by default: it is the noisiest axis. Palm size = wrist -> middle-finger
+# base distance, which does not change with the finger pose. ratio = size / size at re-centre.
+MIRROR_DEPTH = False
+MIRROR_GAIN_Y_MM = 250.0   # arm mm per +100 % apparent palm size
+MIRROR_Y_SIGN = -1.0       # bigger hand (closer to the camera) -> more negative y (toward the arm's front)
+DEPTH_DEADBAND = 0.05      # ignore size ratios within +-5 % of the reference
+DEPTH_SMOOTHING = 0.15
 RECENTER_RADIUS = 0.12     # normalised distance from the frame centre that counts as "re-centred"
 RECENTER_HOLD_S = 0.3
 CONTROL_HZ = 10.0
@@ -102,8 +115,21 @@ EXTENSION_MAX = 0.88       # targets needing more of the arm's full stretch are 
 READBACK_EVERY_S = 2.0     # how often the control loop reads the real position for the status strip
 HALT_MOVE_MS = 300         # duration of the "stop where you are" command on FREEZE / abort
 
-# Gripper = the MaxArm suction nozzle: GRIP = pump on, RELEASE = pump off + vent + valve close.
-GRIP_SETTLE_S = 0.5
+# Gripper = the MaxArm suction nozzle: GRAB = pump on, RELEASE = pump off + vent + valve close.
+# GRAB / PLACE routines happen at the arm's current (x, y): descend to hover, then slowly to the pick
+# height, act, lift back to hover, then to the height the arm came from. None = the block picker's value
+# (pick height = TABLE_Z + BLOCK_HEIGHT - CUP_PRESS, i.e. the cup pressed onto a 40 mm block's top).
+GRAB_Z_MM: float | None = None
+GRAB_HOVER_MM: float | None = None      # None = block picker HOVER_OFFSET_MM (40)
+PLACE_LIFT_MM: float | None = None      # release this far above the pick height (block picker RELEASE_LIFT_MM, 20)
+GRAB_SUCTION_PAUSE_S = 1.0              # let the vacuum build before lifting
+# While holding a block the mirror box floor rises to this height so the carried block (bottom = z - 40)
+# clears blocks still on the table (tops at 87). None = block picker TRAVEL_Z_MM (160).
+CARRY_Z_FLOOR_MM: float | None = None
+GRAB_DESCENT_MS = 700                   # slow final descent
+# Whether mirroring asks for a re-centred hand after each routine. GRAB/PLACE return to the height they
+# left from, so the finger -> arm mapping is still valid and mirroring just continues.
+RESUME_RECENTER = {"HOME": True, "PICK": True, "FLOURISH": True, "GRAB": False, "PLACE": False}
 
 # FLOURISH: scripted wave then nod, as offsets (dx, dy, dz, ms) from MIRROR_ORIGIN_XYZ_MM.
 FLOURISH_STEPS = [

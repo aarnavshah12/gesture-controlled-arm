@@ -33,6 +33,19 @@ class FakeArm:
         self.commanded = (x, y, z)
         self._rec("stream", round(x), round(y), round(z))
 
+    gripping = False
+
+    def suction(self, on):
+        self._rec("suction", on)
+        self.gripping = bool(on)
+
+    def wait(self, seconds):
+        end = time.time() + min(seconds, 0.03)
+        while time.time() < end:
+            if self.tick:
+                self.tick()
+            time.sleep(0.005)
+
     def move_to(self, x, y, z, ms=None):
         self.commanded = (x, y, z)
         self._rec("move", round(x), round(y), round(z))
@@ -59,6 +72,7 @@ class FakeArm:
 
     def release(self):
         self._rec("release")
+        self.gripping = False
 
     def read_xyz(self):
         return None
@@ -82,6 +96,7 @@ class IntegrationTest(unittest.TestCase):
         self.toasts = viz.Toasts()
         self.ops = gesture_arm.ArmOps(self.log)
         self.actions = gesture_arm.AppActions(self.arm, self.ctl, self.routines, self.toasts, self.ops, self.log, box=BOX)
+        self.actions.carry_floor = 160.0
         self.sm = StateMachine(self.actions, log=self.log)
         self.actions.sm = self.sm
         self.deb = Debouncer(n=3, threshold=0.7, log=self.log)
@@ -127,11 +142,28 @@ class IntegrationTest(unittest.TestCase):
         for e in a.log:
             if e[0] == "stream":
                 self.assertTrue(BOX[0][0] <= e[1] <= BOX[0][1] and BOX[2][0] <= e[3] <= BOX[2][1], e)
-        # 2. grip, release
+        # 2. pinch = GRAB routine at the current spot, then open-palm = PLACE (holding), both resume
+        #    mirroring without a re-centre
+        config.GRAB_Z_MM, config.GRAB_HOVER_MM, config.PLACE_LIFT_MM = 84.0, 40.0, 20.0
         self.hold("pinch")
+        self.assertEqual(sm.mode, ROUTINE)
+        self.assertTrue(self.wait_until(lambda: sm.mode == MIRROR))
+        self.assertIn(("suction", True), [e[:2] for e in a.log])
+        self.assertTrue(a.gripping)
+        self.assertFalse(ctl.recenter_required)
+        self.assertTrue(self.wait_until(lambda: ctl.box[2][0] == 160.0))     # carry floor while holding
+        self.assertTrue(self.wait_until(lambda: a.commanded is not None and a.commanded[2] >= 160.0))  # rose first
         self.hold("open-palm")
-        self.assertTrue(self.wait_until(lambda: a.kinds().count("release") == 1))
-        self.assertEqual([k for k in a.kinds() if k in ("grip", "release")], ["grip", "release"])
+        self.assertEqual(sm.mode, ROUTINE)
+        self.assertEqual(sm.routine, "PLACE")
+        self.assertTrue(self.wait_until(lambda: sm.mode == MIRROR))
+        self.assertEqual(a.kinds().count("release"), 1)
+        self.assertFalse(a.gripping)
+        self.assertFalse(ctl.recenter_required)
+        self.assertTrue(self.wait_until(lambda: ctl.box[2][0] == BOX[2][0]))  # floor back to normal
+        # open-palm with nothing held is a plain release
+        self.hold("open-palm")
+        self.assertTrue(self.wait_until(lambda: a.kinds().count("release") == 2))
         self.assertEqual(sm.mode, MIRROR)
         # 3. home routine -> back to MIRROR with re-centre required
         self.hold("thumbs-up")
@@ -157,10 +189,10 @@ class IntegrationTest(unittest.TestCase):
         self.actions.drain()
         self.assertEqual(sm.mode, FROZEN)           # aborted routine's done() must not unfreeze
         self.hold("pinch")
-        self.assertEqual(a.kinds().count("grip"), 1)   # ignored while frozen
+        self.assertEqual(sm.mode, FROZEN)              # ignored while frozen: no GRAB routine
         self.hold("open-palm")
         self.assertTrue(self.wait_until(lambda: sm.mode == MIRROR and ctl.enabled))
-        self.assertEqual(a.kinds().count("release"), 2)
+        self.assertEqual(a.kinds().count("release"), 3)
         # the resume is queued AFTER the release in the ops queue
         idx_rel = max(i for i, e in enumerate(a.log) if e[0] == "release")
         self.assertTrue(ctl.recenter_required)

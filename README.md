@@ -1,7 +1,7 @@
 # Gesture Arm
 
 A hand in front of the Mac's camera drives a Hiwonder MaxArm. MediaPipe hand landmarks (21 points, every
-frame) decide **where** the arm goes: the wrist is mirrored onto the end effector. An RF-DETR gesture
+frame) decide **where** the arm goes: your index fingertip is mirrored onto the end effector. An RF-DETR gesture
 model trained on [Roboflow](https://roboflow.com) and run locally decides **what** the arm does: six
 gestures, debounced into events. Everything runs on the Mac; the arm's own firmware does the inverse
 kinematics and only ever receives end-effector (x, y, z) and suction on/off over USB serial.
@@ -20,12 +20,12 @@ the wrist trail, the mode banner, event toasts and a status strip, all drawn eve
 
 | Gesture (model class) | Event | What the arm does |
 |---|---|---|
+| `point` | (steer) | The steering pose: the arm follows your index fingertip. Never fires an event. |
+| `pinch` | GRAB | At the current spot: descend to hover, slowly onto the block, suction on, lift back up. Mirroring continues without re-centring. |
+| `open-palm` | RELEASE / PLACE / RESUME | Holding something: descend, release just above the block, lift back up. Otherwise a plain release. From FROZEN: the only way out (plain release). |
 | `fist` | FREEZE | Dead-man switch. Halts where it is, ignores everything except `open-palm`. Aborts any routine. |
-| `open-palm` | RELEASE / RESUME | Opens the "gripper" (vents the suction cup). The only way out of FROZEN. |
-| `pinch` | GRIP | Closes the "gripper" (suction pump on). |
-| `thumbs-up` | HOME | Goes to the home pose. Mirroring resumes once your hand is back in the centre of the frame. |
-| `point` | PICK | Runs the block picker's pick-and-place once (overhead camera, its model, its calibration). |
-| `peace` | FLOURISH | A scripted wave and nod. |
+| `thumbs-up` | HOME | Goes to the home pose. Mirroring resumes once your finger is back in the centre of the frame. |
+| `peace` | FLOURISH | A scripted wave and nod. (Map `"peace": "PICK"` in `gesture/config.py` for the block picker's autonomous pick instead.) |
 
 An event fires after 5 consecutive accepted predictions above 0.7 confidence (`gesture/config.py`), once
 per hold; a flickering prediction fires nothing. The arc on the box shows the charge.
@@ -55,9 +55,11 @@ PICK, its `calibration.npy`, model and overhead camera. Nothing from it is copie
 Keys: `q`/Esc quit, `c` toggle the status strip, `f` toggle full screen, `r` re-centre the hand reference
 (only in MIRROR; it never un-freezes).
 
-Mirroring starts when your hand sits in the centre of the frame for a moment (the banner says so). Then
-hand left/right = arm x, hand up/down = arm z, inside a fixed box in front of the arm. No hand for 1 s =
-the arm holds. After HOME or any routine you re-centre again.
+Mirroring starts when your index fingertip sits in the centre of the frame for a moment (the banner says
+so). Then finger left/right = arm x, finger up/down = arm z, inside a fixed box in front of the arm. No hand
+for 1 s = the arm holds. After HOME or FLOURISH you re-centre again; after GRAB / PLACE you just carry on.
+Optional depth (hand closer to the camera = arm forward) is `MIRROR_DEPTH` in `gesture/config.py`, off by
+default because it is the noisiest axis.
 
 ## Bring-up, in the plan's order
 

@@ -8,7 +8,9 @@
     python gesture_arm.py --headless --frames 60 --save-overlay   no window; saves one overlay JPEG (tests)
 
 Keys: q / Esc quit, c toggle the status strip, f toggle full screen, r re-centre the hand reference.
-Gestures: fist FREEZE, open-palm RELEASE/resume, pinch GRIP, thumbs-up HOME, point PICK, peace FLOURISH.
+Gestures: point = steer (the arm follows your index fingertip), pinch GRAB (descend, suction, lift),
+open-palm RELEASE / PLACE (descend, release, lift) / resume from FROZEN, fist FREEZE, thumbs-up HOME,
+peace FLOURISH.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ TOAST = {
     "FREEZE": ("FROZEN", config.GESTURE_COLOURS["fist"]),
     "RELEASE": ("RELEASE", config.GESTURE_COLOURS["open-palm"]),
     "GRIP": ("GRIP", config.GESTURE_COLOURS["pinch"]),
+    "GRAB": ("GRAB", config.GESTURE_COLOURS["pinch"]),
     "HOME": ("GOING HOME", config.GESTURE_COLOURS["thumbs-up"]),
     "PICK": ("PICK ROUTINE", config.GESTURE_COLOURS["point"]),
     "FLOURISH": ("FLOURISH", config.GESTURE_COLOURS["peace"]),
@@ -130,6 +133,7 @@ class AppActions(Actions):
     def __init__(self, arm, controller: MotionController, routines, toasts: viz.Toasts, ops: ArmOps, log, box=None):
         self.arm, self.controller, self.routines, self.toasts, self.ops, self.log = arm, controller, routines, toasts, ops, log
         self.box = box
+        self.carry_floor = None        # z floor while holding a block (set by main from config / block picker)
         self.sm = None                 # set by main() once the StateMachine exists
         self.done_q: queue.Queue = queue.Queue()
 
@@ -142,6 +146,9 @@ class AppActions(Actions):
     def grip(self) -> None:
         self.ops.submit(self.arm.grip, "grip")
 
+    def is_gripping(self) -> bool:
+        return bool(getattr(self.arm, "gripping", False))
+
     def resume_mirror(self, recenter: bool) -> None:
         epoch = self.controller.epoch
 
@@ -150,11 +157,15 @@ class AppActions(Actions):
                 self.log.warning("resume-mirror skipped: mode is %s", self.sm.mode)
                 return
             pos = self.controller.sync_to_arm()
-            if pos is not None and self.box is not None and pos[2] < self.box[2][0] - 1.0:
-                # below the mirror box floor (e.g. a fist during PICK's descent): go straight up first,
-                # never sideways at block height. A refused rise leaves mirroring disabled.
+            # carrying a block: the floor rises to travel height so the block clears the ones on the table
+            zf = self.box[2][0] if self.box is not None else None
+            if self.is_gripping():
+                zf = self.carry_floor if self.carry_floor is not None else zf
+            self.controller.set_z_floor(zf if self.is_gripping() else None)
+            if pos is not None and zf is not None and pos[2] < zf - 1.0:
+                # below the (current) floor, e.g. after a GRAB or a fist during a descent: go straight up
+                # first, never sideways at block height. A refused rise leaves mirroring disabled.
                 x, y = pos[0], pos[1]
-                zf = self.box[2][0]
                 self.log.info("resume-mirror: arm at z=%.0f below the box floor %.0f -> vertical rise first", pos[2], zf)
                 # the sync above may have taken a second: a fist in that window bumped the epoch, and the
                 # halt it sent must stay in force. Check + release are atomic against halt().
@@ -253,6 +264,13 @@ def main(argv=None) -> int:
     toasts = viz.Toasts()
     ops = ArmOps(log)
     actions = AppActions(arm, controller, routines, toasts, ops, log, box=box)
+    actions.carry_floor = config.CARRY_Z_FLOOR_MM
+    if actions.carry_floor is None:
+        try:
+            actions.carry_floor = float(bp.load().config.TRAVEL_Z_MM)
+        except bp.BlockPickerMissing:
+            actions.carry_floor = box[2][1]          # no rig values: carry at the top of the box
+    log.info("carry floor (z while holding) = %.0f", actions.carry_floor)
     sm = StateMachine(actions)
     actions.sm = sm
     deb = Debouncer(args.debounce, args.conf)
@@ -296,11 +314,12 @@ def main(argv=None) -> int:
             hand = tracker.process(frame, t)
             if hand is not None:
                 missing = 0
-                w = hand.wrist_norm
+                w = tuple(float(v) for v in hand.norm[config.TRACK_LANDMARK])   # index fingertip by default
                 a = config.WRIST_SMOOTHING
                 ema = w if ema is None else (ema[0] + a * (w[0] - ema[0]), ema[1] + a * (w[1] - ema[1]))
                 trail.append((ema[0] * frame.shape[1], ema[1] * frame.shape[0]))
-                controller.update_hand(ema, t)
+                size = float(((hand.norm[0] - hand.norm[9]) ** 2).sum() ** 0.5) if config.MIRROR_DEPTH else None
+                controller.update_hand(ema, t, size)
             else:
                 missing += 1
                 if trail:
@@ -321,6 +340,8 @@ def main(argv=None) -> int:
                     if ev.name == "RELEASE" and sm.mode == FROZEN:
                         text = "RESUME"
                     mode_before = sm.mode
+                    if ev.name == "RELEASE" and sm.mode == MIRROR and actions.is_gripping():
+                        text = "PLACE"
                     if sm.on_event(ev):
                         toasts.add(text, colour, t)
                     elif ev.name != "FREEZE":
@@ -337,7 +358,7 @@ def main(argv=None) -> int:
             elif sm.mode == ROUTINE:
                 sub = f"{routines.current or ''}  {routines.status}".strip()
             elif snap["recenter"]:
-                sub = "centre your hand to start mirroring"
+                sub = "centre your index finger to start"
             elif snap["holding"]:
                 sub = "no hand - holding"
             else:

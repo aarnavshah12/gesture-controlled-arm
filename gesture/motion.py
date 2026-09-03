@@ -84,11 +84,20 @@ def step_toward_polar(cur, target, max_step: float) -> tuple[float, float, float
     return (r * math.cos(a), r * math.sin(a), z)
 
 
-def hand_to_target(wrist_norm, ref_norm, origin, box: Box) -> tuple[float, float, float]:
-    """Relative mirroring: arm target = origin + gain * (wrist - reference), clamped."""
-    dx = (wrist_norm[0] - ref_norm[0]) * config.MIRROR_GAIN_X_MM * config.MIRROR_X_SIGN
-    dz = (wrist_norm[1] - ref_norm[1]) * config.MIRROR_GAIN_Z_MM * config.MIRROR_Z_SIGN
-    return clamp_target((origin[0] + dx, origin[1], origin[2] + dz), box, origin)
+def hand_to_target(point_norm, ref_norm, origin, box: Box, size_ratio: float | None = None) -> tuple[float, float, float]:
+    """Relative mirroring: arm target = origin + gain * (tracked point - reference), clamped.
+
+    `size_ratio` (apparent palm size / size at the reference) drives y when config.MIRROR_DEPTH is on.
+    """
+    dx = (point_norm[0] - ref_norm[0]) * config.MIRROR_GAIN_X_MM * config.MIRROR_X_SIGN
+    dz = (point_norm[1] - ref_norm[1]) * config.MIRROR_GAIN_Z_MM * config.MIRROR_Z_SIGN
+    dy = 0.0
+    if config.MIRROR_DEPTH and size_ratio is not None:
+        r = size_ratio - 1.0
+        if abs(r) > config.DEPTH_DEADBAND:
+            r -= config.DEPTH_DEADBAND if r > 0 else -config.DEPTH_DEADBAND
+            dy = r * config.MIRROR_GAIN_Y_MM * config.MIRROR_Y_SIGN
+    return clamp_target((origin[0] + dx, origin[1] + dy, origin[2] + dz), box, origin)
 
 
 class MotionController(threading.Thread):
@@ -98,6 +107,7 @@ class MotionController(threading.Thread):
         super().__init__(name="gesture-motion", daemon=True)
         self.arm = arm
         self.box = box
+        self.base_box = box             # the configured box; set_z_floor() raises the floor while carrying
         # check(x, y, z) -> bool: the driver's envelope (reach limits, table Z, base keep-out radius).
         # A step is only streamed if it passes; the driver checks again before sending.
         self.check = check or (lambda x, y, z: clamp_box((x, y, z), box) == (x, y, z))
@@ -114,6 +124,8 @@ class MotionController(threading.Thread):
         self.target = self.origin
         self.commanded = None           # last point streamed (None until the first command)
         self.hand_ref = None
+        self.size_ref = None            # apparent palm size at the reference (depth mapping)
+        self.size_ema = None
         self.recenter_required = True
         self._recenter_since = None
         self.last_hand_t = 0.0
@@ -135,13 +147,20 @@ class MotionController(threading.Thread):
         self.errors = 0
 
     # -- inputs -------------------------------------------------------------------
-    def update_hand(self, wrist_norm, t: float) -> None:
-        """Called every camera frame with the (smoothed) wrist in normalised coords, or None."""
+    def update_hand(self, wrist_norm, t: float, size: float | None = None) -> None:
+        """Called every camera frame with the (smoothed) tracked point in normalised coords, or None.
+
+        `size` is the apparent palm size (normalised units), used for depth when MIRROR_DEPTH is on.
+        """
         with self._lock:
             if wrist_norm is None:
                 self._recenter_since = None     # the centre-hold restarts when the hand comes back
+                self.size_ema = None
                 return
             self.last_hand_t = t
+            if size is not None:
+                a = config.DEPTH_SMOOTHING
+                self.size_ema = size if self.size_ema is None else self.size_ema + a * (size - self.size_ema)
             if self.holding:
                 self.holding = False
                 self.log.info("mirror: hand back, resuming from hold")
@@ -152,16 +171,22 @@ class MotionController(threading.Thread):
                         self._recenter_since = t
                     elif t - self._recenter_since >= config.RECENTER_HOLD_S:
                         self.hand_ref = (float(wrist_norm[0]), float(wrist_norm[1]))
+                        self.size_ref = self.size_ema
                         self.recenter_required = False
                         self._recenter_since = None
-                        self.log.info("mirror: hand re-centred at (%.2f, %.2f); reference set", *self.hand_ref)
+                        self.log.info("mirror: hand re-centred at (%.2f, %.2f); reference set (size %s)",
+                                      *self.hand_ref, None if self.size_ref is None else round(self.size_ref, 3))
                 else:
                     self._recenter_since = None
                 return
             if self.hand_ref is None:
                 self.hand_ref = (float(wrist_norm[0]), float(wrist_norm[1]))
+                self.size_ref = self.size_ema
                 self.log.info("mirror: reference set at (%.2f, %.2f)", *self.hand_ref)
-            self.target = hand_to_target(wrist_norm, self.hand_ref, self.origin, self.box)
+            ratio = None
+            if self.size_ref and self.size_ema:
+                ratio = self.size_ema / self.size_ref
+            self.target = hand_to_target(wrist_norm, self.hand_ref, self.origin, self.box, ratio)
 
     # -- mode changes ---------------------------------------------------------------
     def sync_to_arm(self):
@@ -213,6 +238,7 @@ class MotionController(threading.Thread):
             self._recenter_since = None
             if recenter:
                 self.hand_ref = None
+                self.size_ref = None
             self.target = self.commanded if self.commanded is not None else self.origin
             current = self.epoch
         if not self.release_halt_if_current(current):
@@ -221,6 +247,15 @@ class MotionController(threading.Thread):
             return False
         self.log.info("mirror: resumed (recenter=%s)", recenter)
         return True
+
+    def set_z_floor(self, z_floor: float | None) -> None:
+        """Raise (never lower below the configured) the box floor, e.g. to travel height while carrying."""
+        (xr, yr, (zlo, zhi)) = self.base_box
+        zf = zlo if z_floor is None else min(max(float(z_floor), zlo), zhi)
+        with self._lock:
+            self.box = (xr, yr, (zf, zhi))
+            self.target = clamp_target(self.target, self.box, self.origin)
+        self.log.info("mirror: z floor %s -> %.0f", "reset" if z_floor is None else "set", zf)
 
     def release_halt_if_current(self, epoch: int) -> bool:
         """Clear the arm's motion inhibit only if no freeze()/pause() happened since `epoch`.

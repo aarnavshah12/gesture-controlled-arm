@@ -72,6 +72,26 @@ class MathTest(unittest.TestCase):
         self.assertEqual(clamp_box(t, BOX), t)
 
 
+class DepthTest(unittest.TestCase):
+    def test_depth_off_keeps_origin_y(self):
+        config.MIRROR_DEPTH = False
+        t = hand_to_target((0.5, 0.5), (0.5, 0.5), ORIGIN, BOX, size_ratio=1.5)
+        self.assertEqual(t[1], ORIGIN[1])
+
+    def test_depth_on_moves_y_outside_deadband_only(self):
+        config.MIRROR_DEPTH = True
+        try:
+            same = hand_to_target((0.5, 0.5), (0.5, 0.5), ORIGIN, BOX, size_ratio=1.03)
+            self.assertEqual(same[1], ORIGIN[1])
+            closer = hand_to_target((0.5, 0.5), (0.5, 0.5), ORIGIN, BOX, size_ratio=1.25)
+            self.assertLess(closer[1], ORIGIN[1])            # bigger hand -> toward the arm's front (-y)
+            farther = hand_to_target((0.5, 0.5), (0.5, 0.5), ORIGIN, BOX, size_ratio=0.8)
+            self.assertGreater(farther[1], ORIGIN[1])
+            self.assertEqual(clamp_box(closer, BOX), closer)
+        finally:
+            config.MIRROR_DEPTH = False
+
+
 class ControllerTest(unittest.TestCase):
     def make(self, arm=None):
         arm = arm or FakeArm()
@@ -236,6 +256,21 @@ class ControllerTest(unittest.TestCase):
         self.assertTrue(c.recenter_required)  # the hold restarted at 0.2, not 0.0
         c.update_hand((0.5, 0.5), 0.2 + config.RECENTER_HOLD_S + 0.01)
         self.assertFalse(c.recenter_required)
+
+    def test_z_floor_raises_and_resets(self):
+        arm, c = self.make()
+        c.resume(recenter=False)
+        c.update_hand((0.5, 0.5), 0.0)
+        c.update_hand((0.5, 0.9), 0.1)            # finger low -> target at the box floor
+        self.assertEqual(c.target[2], BOX[2][0])
+        c.set_z_floor(160.0)
+        self.assertEqual(c.target[2], 160.0)      # existing target lifted
+        c.update_hand((0.5, 0.9), 0.2)
+        self.assertEqual(c.target[2], 160.0)      # new targets clamped to the carry floor
+        c.set_z_floor(50.0)                       # never below the configured floor
+        self.assertEqual(c.box[2][0], BOX[2][0])
+        c.set_z_floor(None)
+        self.assertEqual(c.box, BOX)
 
     def test_targets_always_inside_box(self):
         arm, c = self.make()

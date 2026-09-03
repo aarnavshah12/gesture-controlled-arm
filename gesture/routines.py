@@ -22,7 +22,7 @@ class RoutineAborted(Exception):
 
 
 class Routines:
-    NAMES = ("HOME", "PICK", "FLOURISH")
+    NAMES = ("HOME", "PICK", "FLOURISH", "GRAB", "PLACE")
 
     def __init__(self, arm, dry_run: bool, log=None, mac_camera_index: int | None = None):
         self.arm = arm
@@ -90,7 +90,8 @@ class Routines:
         t0 = time.time()
         self.log.info("routine %s: start (dry_run=%s)", name, self.dry_run)
         try:
-            {"HOME": self._home, "PICK": self._pick, "FLOURISH": self._flourish}[name]()
+            {"HOME": self._home, "PICK": self._pick, "FLOURISH": self._flourish,
+             "GRAB": self._grab, "PLACE": self._place}[name]()
             ok = True
             self.log.info("routine %s: done in %.1fs", name, time.time() - t0)
         except RoutineAborted as e:
@@ -105,6 +106,68 @@ class Routines:
             self.current = None
 
     # -- routines -------------------------------------------------------------------
+    def _heights(self) -> tuple[float, float, float]:
+        """(pick z, hover offset, place lift) from config, falling back to the block picker's values."""
+        pick_z, hover, lift = config.GRAB_Z_MM, config.GRAB_HOVER_MM, config.PLACE_LIFT_MM
+        if pick_z is None or hover is None or lift is None:
+            c = bp.load().config
+            if pick_z is None:
+                pick_z = c.require("TABLE_Z_MM") + c.BLOCK_HEIGHT_MM - c.CUP_PRESS_MM
+            if hover is None:
+                hover = c.HOVER_OFFSET_MM
+            if lift is None:
+                lift = c.RELEASE_LIFT_MM
+        return float(pick_z), float(hover), float(lift)
+
+    def _where(self) -> tuple[float, float, float]:
+        """The arm's current position: read-back when live, else the last commanded point."""
+        pos = None
+        if not self.dry_run:
+            self.arm.wait(config.STREAM_MOVE_MS / 1000.0 + 0.1)   # the last streamed move may still be running
+            pos = self.arm.read_xyz()
+            if pos is None:
+                pos = self.arm.read_xyz()
+        if pos is None:
+            pos = getattr(self.arm, "commanded", None)
+        if pos is None:
+            raise RuntimeError("arm position unknown: cannot grab/place here")
+        return float(pos[0]), float(pos[1]), float(pos[2])
+
+    def _grab(self) -> None:
+        """Descend at the current (x, y), suction on, come back up to where we were."""
+        x, y, z0 = self._where()
+        pick_z, hover, _ = self._heights()
+        z_top = max(z0, pick_z + hover)
+        self.log.info("routine GRAB: at (%.0f, %.0f) from z=%.0f: hover %.0f, pick %.0f, back to %.0f",
+                      x, y, z0, pick_z + hover, pick_z, z_top)
+        self._check("before grab")
+        self.status = "descending"
+        self.arm.move_to(x, y, pick_z + hover)
+        self.arm.move_to(x, y, pick_z, config.GRAB_DESCENT_MS)
+        self.status = "suction on"
+        self.arm.suction(True)
+        self.arm.wait(config.GRAB_SUCTION_PAUSE_S)
+        self.status = "lifting"
+        self.arm.move_to(x, y, pick_z + hover)
+        self.arm.move_to(x, y, z_top)
+
+    def _place(self) -> None:
+        """Descend at the current (x, y), release just above the pick height, come back up."""
+        x, y, z0 = self._where()
+        pick_z, hover, lift = self._heights()
+        z_top = max(z0, pick_z + hover)
+        self.log.info("routine PLACE: at (%.0f, %.0f) from z=%.0f: hover %.0f, release at %.0f, back to %.0f",
+                      x, y, z0, pick_z + hover, pick_z + lift, z_top)
+        self._check("before place")
+        self.status = "descending"
+        self.arm.move_to(x, y, pick_z + hover)
+        self.arm.move_to(x, y, pick_z + lift, config.GRAB_DESCENT_MS)
+        self.status = "releasing"
+        self.arm.release()                       # vent, wait, valve close (the cup is not pressed here)
+        self.status = "lifting"
+        self.arm.move_to(x, y, pick_z + hover)
+        self.arm.move_to(x, y, z_top)
+
     def _home(self) -> None:
         self.status = "going home"
         self._check("before home")

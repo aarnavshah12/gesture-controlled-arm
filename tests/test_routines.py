@@ -18,9 +18,30 @@ class FakeArm:
         self.tick = None
         self.step_s = step_s
         self.commanded = None
+        self.events = []
+        self.gripping = False
+
+    def suction(self, on):
+        self.events.append(("suction", on))
+        self.gripping = bool(on)
+
+    def release(self):
+        self.events.append(("release",))
+        self.gripping = False
+
+    def wait(self, seconds):
+        end = time.time() + min(seconds, 0.02)
+        while time.time() < end:
+            if self.tick:
+                self.tick()
+            time.sleep(0.005)
+
+    def read_xyz(self):
+        return None
 
     def move_to(self, x, y, z, ms=None):
         self.moves.append((x, y, z, ms))
+        self.events.append(("move", x, y, z))
         self.commanded = (x, y, z)
         end = time.time() + self.step_s
         while time.time() < end:          # like Arm.wait(): pump tick every ~50 ms
@@ -55,6 +76,61 @@ class RoutinesTest(unittest.TestCase):
         ox, oy, oz = config.MIRROR_ORIGIN_XYZ_MM
         self.assertEqual(arm.moves[0][:3], (ox, oy, oz))
         self.assertIsNone(r.current)
+
+    def _fixed_heights(self):
+        config.GRAB_Z_MM, config.GRAB_HOVER_MM, config.PLACE_LIFT_MM = 84.0, 40.0, 20.0
+
+    def test_grab_descends_sucks_and_returns(self):
+        self._fixed_heights()
+        arm = FakeArm()
+        arm.commanded = (30.0, -180.0, 150.0)
+        r = Routines(arm, dry_run=True, log=silent_logger())
+        self.assertTrue(self.run_routine(r, "GRAB"))
+        self.assertEqual([m[:3] for m in arm.moves], [(30.0, -180.0, 124.0), (30.0, -180.0, 84.0),
+                                                      (30.0, -180.0, 124.0), (30.0, -180.0, 150.0)])
+        self.assertEqual(arm.moves[1][3], config.GRAB_DESCENT_MS)
+        kinds = [e[0] if e[0] != "move" else "move" for e in arm.events]
+        self.assertEqual(arm.events[2], ("suction", True))      # after the descent, before the lift
+        self.assertTrue(arm.gripping)
+
+    def test_grab_from_below_hover_returns_to_hover_not_lower(self):
+        self._fixed_heights()
+        arm = FakeArm()
+        arm.commanded = (0.0, -175.0, 100.0)
+        r = Routines(arm, dry_run=True, log=silent_logger())
+        self.assertTrue(self.run_routine(r, "GRAB"))
+        self.assertEqual(arm.moves[-1][:3], (0.0, -175.0, 124.0))
+
+    def test_place_releases_above_pick_height(self):
+        self._fixed_heights()
+        arm = FakeArm()
+        arm.commanded = (-50.0, -200.0, 160.0)
+        arm.gripping = True
+        r = Routines(arm, dry_run=True, log=silent_logger())
+        self.assertTrue(self.run_routine(r, "PLACE"))
+        self.assertEqual([m[2] for m in arm.moves], [124.0, 104.0, 124.0, 160.0])
+        self.assertEqual(arm.events[2], ("release",))
+        self.assertFalse(arm.gripping)
+
+    def test_grab_aborts_mid_descent(self):
+        self._fixed_heights()
+        arm = FakeArm(step_s=0.3)
+        arm.commanded = (0.0, -175.0, 150.0)
+        r = Routines(arm, dry_run=True, log=silent_logger())
+        done = threading.Event(); out = {}
+        r.start("GRAB", lambda ok: (out.__setitem__("ok", ok), done.set()))
+        time.sleep(0.1)
+        r.abort()
+        self.assertTrue(done.wait(2.0))
+        self.assertFalse(out["ok"])
+        self.assertNotIn(("suction", True), arm.events)          # never switched the pump on
+
+    def test_grab_without_position_fails_cleanly(self):
+        self._fixed_heights()
+        arm = FakeArm()
+        r = Routines(arm, dry_run=True, log=silent_logger())
+        self.assertFalse(self.run_routine(r, "GRAB"))
+        self.assertEqual(arm.moves, [])
 
     def test_home_calls_driver_home(self):
         arm = FakeArm()

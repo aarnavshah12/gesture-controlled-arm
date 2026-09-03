@@ -84,8 +84,9 @@ def draw_bbox(img, box, label: str, colour, progress: float = 0.0, thick: int = 
 
 # ---------------------------------------------------------------- 2. skeleton
 
-def draw_skeleton(img, pts: np.ndarray, connections, colour=SKELETON):
-    """All 21 landmarks: bones, a dot on every joint, larger dots on the fingertips and wrist."""
+def draw_skeleton(img, pts: np.ndarray, connections, colour=SKELETON, track: int | None = None):
+    """All 21 landmarks: bones, a dot on every joint, larger dots on the fingertips and wrist, and a
+    ring on the landmark that drives the arm (`track`)."""
     p = [(int(round(x)), int(round(y))) for x, y in pts]
     for a, b in connections:
         cv2.line(img, p[a], p[b], INK, 5, cv2.LINE_AA)
@@ -97,6 +98,9 @@ def draw_skeleton(img, pts: np.ndarray, connections, colour=SKELETON):
         else:
             cv2.circle(img, pt, 6, INK, -1, cv2.LINE_AA)
             cv2.circle(img, pt, 4, SKELETON_DOT, -1, cv2.LINE_AA)
+    if track is not None and 0 <= track < len(p):
+        cv2.circle(img, p[track], 16, INK, 4, cv2.LINE_AA)
+        cv2.circle(img, p[track], 16, TRAIL, 2, cv2.LINE_AA)
 
 
 # ---------------------------------------------------------------- 3. wrist trail
@@ -252,7 +256,7 @@ def render(frame, *, hand=None, connections=(), pred=None, progress: float = 0.0
         colour = gesture_colour(pred.cls)
         draw_bbox(img, pred.box, f"{pred.cls} {pred.conf:.2f}", colour, progress)
     if hand is not None:
-        draw_skeleton(img, hand.pts, connections)
+        draw_skeleton(img, hand.pts, connections, track=config.TRACK_LANDMARK)
     draw_banner(img, mode, mode_sub)
     if toasts is not None:
         toasts.draw(img, t)
