@@ -10,3 +10,9 @@ models/*.task
 *.mp4
 *.mov
 *.MOV
+# local notes and agent config, never committed
+PROGRESS.md
+gesture-agent-instructions.md
+gesture-arm-plan.md
+.claude/
+docs/*.jpg
