@@ -19,8 +19,7 @@ want the numbers on camera; `f` leaves full screen.)
 4. **Place** - `open-palm`: toast PLACE, the arm descends, releases, lifts. Keep steering.
 5. **Home** - `thumbs-up`: banner ROUTINE, arm rises and parks. Re-centre your hand to get mirroring back.
 6. **Handshake** - `peace`: four quick pumps where the arm is, about two seconds. Re-centre.
-7. **Pick** - `point`: the block picker takes over (overhead camera, its model), picks the block, drops it,
-   homes. Re-centre.
+7. **Pick and place, twice** - steer over the next block, pinch, carry it, open palm. This is the headline clip.
 8. **Dead-man** - start another `peace`, then `fist` mid-shake: banner turns solid red FROZEN, the arm stops.
    Try `pinch`: ignored. `open-palm`: RESUME, back to mirroring.
 9. `q` to quit: the arm vents and homes (if you quit while FROZEN it vents and stays put), the recording is saved.

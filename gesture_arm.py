@@ -396,8 +396,10 @@ def main(argv=None) -> int:
                         toasts.add(text, colour, t)
                     elif ev.name != "FREEZE":
                         toasts.add(f"{text} ignored ({sm.last_refusal or mode_before.lower()})", viz.GREY, t)
-                # a charging command gesture holds the target (a forming pinch moves the fingertip)
-                controller.set_charging(deb.cls in config.GESTURE_EVENTS and deb.count >= 1 and not deb.fired, t)
+                # a charging command gesture holds the target (a forming pinch moves the fingertip); only the
+                # grab/place gestures rewind it - a charging FIST must not send the arm anywhere
+                controller.set_charging(deb.cls in config.GESTURE_EVENTS and deb.count >= 1 and not deb.fired, t,
+                                        rewind=deb.cls in ("pinch", "open-palm"))
             actions.drain()   # routine completions, delivered on this thread
 
             # overlay

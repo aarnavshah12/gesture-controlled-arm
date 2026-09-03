@@ -7,14 +7,14 @@ gestures, debounced into events. Everything runs on the Mac; the arm's own firmw
 kinematics and only ever receives end-effector (x, y, z) and suction on/off over USB serial.
 
 ```
-Mac camera ─► brightness fix ─┬─► MediaPipe landmarks (every frame) ─► smoothed wrist ─► 10 Hz mirror loop ─┐
+Mac camera ─► brightness fix ─┬─► MediaPipe landmarks (every frame) ─► index fingertip ─► 15 Hz steering loop ┐
                               └─► RF-DETR gesture model (every 2nd frame, worker thread) ─► debounce ─► events ─┤
                                                                                                                 ▼
                                                                           state machine (MIRROR / FROZEN / ROUTINE) ─► MaxArm
 ```
 
 The demo is the overlay: the gesture box with its confidence pill and charging arc, the full hand skeleton,
-the wrist trail, the mode banner, event toasts and a status strip, all drawn every frame by `gesture/viz.py`.
+the fingertip trail, the mode banner, event toasts and a status strip, all drawn every frame by `gesture/viz.py`.
 
 ## Gestures
 
@@ -35,7 +35,7 @@ per hold; a flickering prediction fires nothing. The arc on the box shows the ch
 ```bash
 ./setup.sh                                   # uv venv (Python 3.12) + pinned deps + MediaPipe hand model
 export ROBOFLOW_API_KEY=...                  # or put ROBOFLOW_API_KEY=... in a gitignored .env
-cd tests && ../.venv/bin/python -m unittest  # 40 offline tests, no hardware needed
+cd tests && ../.venv/bin/python -m unittest  # 102 offline tests, no hardware needed
 ```
 
 The block-picker project must be at `~/Documents/Defect-detect bot` (`gesture/config.py: BLOCK_PICKER_DIR`).
@@ -113,10 +113,10 @@ from the Mac and plug it back in (a reboot also works). If the pump is running, 
 | `gesture/config.py` | Every tunable and physical value; class strings verbatim from the model. |
 | `gesture/camera.py` | Capture, selfie flip, `cv2.convertScaleAbs` brightness correction. |
 | `gesture/perception.py` | `HandTracker` (MediaPipe), `GestureDetector` (RF-DETR via `inference`), `DetectorWorker`. |
-| `gesture/gestures.py` | `Debouncer`, `StateMachine` (MIRROR / FROZEN / ROUTINE), the `Actions` interface. |
-| `gesture/motion.py` | Mirror math, clamps, velocity cap, the 10 Hz `MotionController`. |
+| `gesture/gestures.py` | `Debouncer`, the landmark veto, `StateMachine` (MIRROR / FROZEN / ROUTINE), the `Actions` interface. |
+| `gesture/motion.py` | Steering math, clamps, velocity cap, the 15 Hz `MotionController`. |
 | `gesture/arm.py` | `GestureArm` over the block picker's driver: `stream_to`, `halt`, `grip`, `release`. |
-| `gesture/routines.py` | HOME, FLOURISH, PICK (the block picker's `PickLoop`, once), abortable. |
+| `gesture/routines.py` | GRAB, PLACE, HOME, the handshake, PICK (the block picker's `PickLoop`, once), all abortable. |
 | `gesture/viz.py` | All drawing. |
 | `gesture/bp.py` | Imports the block-picker project as-is. |
 | `gesture/runlog.py` | Per-session log; the block picker's logger writes to the same file. |

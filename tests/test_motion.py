@@ -275,6 +275,10 @@ class ControllerTest(unittest.TestCase):
         self.assertNotEqual(c.target, pointed)
         c.set_charging(True, t=0.5 + 0.033 * 10)  # first pinch result arrives now
         self.assertEqual(c.target, pointed)       # rewound to the pointed spot
+        c.set_charging(False)
+        drifted = c.target
+        c.set_charging(True, t=1.0, rewind=False) # a charging fist just holds where it is
+        self.assertEqual(c.target, drifted)
         c.update_hand((0.7, 0.7), 1.0)
         self.assertEqual(c.target, pointed)       # and held there while the gesture debounces
 

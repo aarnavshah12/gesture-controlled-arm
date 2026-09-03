@@ -268,7 +268,7 @@ class MotionController(threading.Thread):
         self.log.info("mirror: resumed (recenter=%s)", recenter)
         return True
 
-    def set_charging(self, on: bool, t: float | None = None) -> None:
+    def set_charging(self, on: bool, t: float | None = None, rewind: bool = True) -> None:
         """While a command gesture is charging the target is frozen so the action lands where you pointed.
 
         The fingertip curls toward the thumb BEFORE the model can see a pinch, so on the first charging
@@ -281,7 +281,7 @@ class MotionController(threading.Thread):
                 return
             self.charging = on
             rewound = None
-            if on and self._targets:
+            if on and rewind and self._targets:
                 for tt, tg in self._targets:
                     if tt >= t - config.PINCH_FORM_S:
                         rewound = tg
