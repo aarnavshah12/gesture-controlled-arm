@@ -80,7 +80,7 @@ HAND_MIN_TRACKING_CONF = 0.5
 # The landmark that drives the arm: 8 = index fingertip (owner decision 2026-09-03; 0 = wrist).
 TRACK_LANDMARK = 8
 WRIST_SMOOTHING = 0.35    # EMA weight of the newest tracked-point sample (1.0 = raw, 0.1 = very smooth)
-WRIST_TRAIL_LEN = 30      # smoothed tracked-point positions kept for the on-screen trail
+WRIST_TRAIL_LEN = 20      # smoothed tracked-point positions kept for the on-screen trail
 NO_HAND_HOLD_S = 1.0      # no hand for this long in MIRROR = hold position
 
 # --------------------------------------------------------------------------
@@ -113,8 +113,11 @@ MIRROR_GAIN_Y_MM = 250.0   # arm mm per +100 % apparent palm size
 MIRROR_Y_SIGN = -1.0       # bigger hand (closer to the camera) -> more negative y (toward the arm's front)
 DEPTH_DEADBAND = 0.05      # ignore size ratios within +-5 % of the reference
 DEPTH_SMOOTHING = 0.15
-RECENTER_RADIUS = 0.12     # normalised distance from the frame centre that counts as "re-centred"
-RECENTER_HOLD_S = 0.3
+RECENTER_RADIUS = 0.16     # radius of the centre zone as a fraction of the frame HEIGHT (a circle on screen)
+RECENTER_HOLD_S = 0.4      # hold the fingertip inside the zone this long; the ring fills while you do
+RECENTER_LOSS_GRACE_S = 0.3  # a hand lost for less than this does not restart the hold
+PINCH_FORM_S = 0.4         # rewind the target this far when a command gesture starts charging (the fingertip
+                           # curls toward the thumb before the model can see a pinch)
 CONTROL_HZ = 10.0
 VELOCITY_CAP_MM_S = 150.0  # commanded target may move at most this fast (per control tick)
 STREAM_MOVE_MS = 150       # duration sent with each streamed target (a little over one tick)
@@ -166,7 +169,7 @@ MODE_COLOURS = {
     "FROZEN": (68, 68, 239),      # red (filled banner)
     "ROUTINE": (237, 58, 124),    # purple
 }
-TOAST_S = 1.0
+TOAST_S = 0.9
 WINDOW_NAME = "Gesture Arm"
 LOG_DIR = os.path.join(ROOT, "logs")
 

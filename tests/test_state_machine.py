@@ -71,10 +71,11 @@ class StateMachineTest(unittest.TestCase):
         self.assertEqual(self.sm.mode, MIRROR)
         self.assertEqual(self.a.calls, [])
         self.assertEqual(self.sm.last_refusal, "re-centre your finger first")
-        # holding + not steering: open-palm is a plain release, never a PLACE somewhere unplanned
+        # holding + not steering: open-palm is ignored (never drop from an unplanned spot); fist -> open-palm drops
         self.a.gripping = True
-        self.assertTrue(self.sm.on_event(ev("RELEASE", "open-palm")))
-        self.assertEqual(self.a.calls, ["release"])
+        self.assertFalse(self.sm.on_event(ev("RELEASE", "open-palm")))
+        self.assertEqual(self.a.calls, [])
+        self.assertEqual(self.sm.last_refusal, "re-centre your finger first")
 
     def test_flourish_refused_while_holding(self):
         self.a.gripping = True

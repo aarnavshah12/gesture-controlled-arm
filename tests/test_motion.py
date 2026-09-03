@@ -258,9 +258,46 @@ class ControllerTest(unittest.TestCase):
         c.resume(recenter=True)
         c.update_hand((0.5, 0.5), 0.0)
         c.update_hand(None, 0.1)
+        c.update_hand(None, 0.1 + config.RECENTER_LOSS_GRACE_S + 0.05)   # a real loss, not a dropped frame
+        c.update_hand((0.5, 0.5), 0.6)
+        self.assertTrue(c.recenter_required)  # the hold restarted at 0.6, not 0.0
+        c.update_hand((0.5, 0.5), 0.6 + config.RECENTER_HOLD_S + 0.01)
+        self.assertFalse(c.recenter_required)
+
+    def test_charging_rewinds_to_where_the_finger_pointed(self):
+        arm, c = self.make()
+        follow(c)
+        c.update_hand((0.5, 0.5), 0.0)
+        c.update_hand((0.40, 0.45), 0.5)          # pointing here, steady
+        pointed = c.target
+        for k in range(1, 10):                    # the tip curls toward the thumb over 0.3 s
+            c.update_hand((0.40 + 0.006 * k, 0.45 + 0.003 * k), 0.5 + 0.033 * k)
+        self.assertNotEqual(c.target, pointed)
+        c.set_charging(True, t=0.5 + 0.033 * 10)  # first pinch result arrives now
+        self.assertEqual(c.target, pointed)       # rewound to the pointed spot
+        c.update_hand((0.7, 0.7), 1.0)
+        self.assertEqual(c.target, pointed)       # and held there while the gesture debounces
+
+    def test_recentre_zone_is_a_circle_and_tolerates_a_dropped_frame(self):
+        arm, c = self.make()
+        c.aspect = 16 / 9
+        c.resume(recenter=True)
+        c.update_hand((0.5 + 0.14 / c.aspect, 0.5), 0.0)   # 0.14 frame-heights to the right: inside
+        self.assertTrue(c.in_zone)
+        c.update_hand((0.5 + 0.14, 0.5), 0.1)               # 0.14 of the WIDTH: outside on a 16:9 frame
+        self.assertFalse(c.in_zone)
         c.update_hand((0.5, 0.5), 0.2)
-        self.assertTrue(c.recenter_required)  # the hold restarted at 0.2, not 0.0
+        c.update_hand(None, 0.25)                            # one dropped frame
+        c.update_hand((0.5, 0.5), 0.3)
         c.update_hand((0.5, 0.5), 0.2 + config.RECENTER_HOLD_S + 0.01)
+        self.assertFalse(c.recenter_required)                # the hold survived the dropped frame
+
+    def test_recentre_runs_even_while_a_gesture_is_charging(self):
+        arm, c = self.make()
+        c.resume(recenter=True)
+        c.set_charging(True, t=0.0)
+        c.update_hand((0.5, 0.5), 0.0)
+        c.update_hand((0.5, 0.5), config.RECENTER_HOLD_S + 0.01)
         self.assertFalse(c.recenter_required)
 
     def test_charging_holds_the_target(self):

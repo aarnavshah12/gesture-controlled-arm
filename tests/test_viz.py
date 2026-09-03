@@ -61,12 +61,12 @@ class VizTest(unittest.TestCase):
                  "open-palm conf 0.87", "debounce 3/5", "brightness UNCONFIRMED"]
         for w in (1280, 1920, 960):
             sc, kept = viz.status_layout(w, parts)
-            self.assertLessEqual(viz._text_w("   |   ".join(kept), sc, 1)[0], w - 28)
+            self.assertLessEqual(viz._text_w(viz.STATUS_GAP.join(kept), sc, 1)[0], w - 28)
             self.assertTrue(any("conf" in k for k in kept), kept)
         img = np.zeros((720, 1280, 3), np.uint8)
         viz.draw_status(img, fps=29.9, infer_ms=200.0, hand_ms=10.0, arm_xyz=(-115, -175, 150), conf=0.87,
                         gesture="open-palm", extra="debounce 3/5", dry_run=True, warn="brightness UNCONFIRMED")
-        self.assertTrue(img[690:715, 1000:1270].any())     # text reaches the right side but stays inside
+        self.assertTrue(img[688:720, 14:1266].any())        # strip drawn, inside the frame
 
     def test_toasts_expire(self):
         t = viz.Toasts(1.0)

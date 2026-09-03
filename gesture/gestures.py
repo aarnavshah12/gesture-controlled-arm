@@ -207,11 +207,10 @@ class StateMachine:
         elif ev.name == "RELEASE":
             if self.actions.is_gripping():
                 ok, why = self.actions.can_grab()
-                if ok:
-                    self._start_routine("PLACE")    # holding something: set it down, don't drop it from height
-                else:
-                    self.log.warning("RELEASE while holding but %s: plain release (the object drops here)", why)
-                    self.actions.release()
+                if not ok:
+                    # never drop a held object from an unplanned spot; fist -> open-palm is the deliberate drop
+                    return self._ignore(ev, why)
+                self._start_routine("PLACE")        # holding something: set it down, don't drop it from height
             else:
                 self.actions.release()
         elif ev.name in ROUTINE_EVENTS:

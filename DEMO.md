@@ -9,9 +9,9 @@ lit as when the dataset was collected. Mac camera facing the presenter, hand abo
 Answer `y` to `Workspace clear?`. The window goes full screen. (`c` brings the status strip back if you
 want the numbers on camera; `f` leaves full screen.)
 
-1. **Centre** - point at the camera and hold your fingertip in the middle of the frame until the "centre
-   your index finger" line goes away. Box + skeleton + trail are on screen from the first frame; the ring
-   marks the fingertip that steers.
+1. **Centre** - point at the camera and hold your fingertip inside the ring in the middle of the frame; it
+   turns green and fills, then disappears. Box + skeleton + trail are on screen from the first frame; the
+   small ring on the skeleton marks the fingertip that steers.
 2. **Steer** - move the finger slowly left/right, then up/down; the arm follows inside its box. Park it
    above a block. Drop the hand out of frame for a second: the arm holds.
 3. **Grab** - `pinch`, hold until the arc fills: toast GRAB, the arm descends, sucks, lifts. Steer the block

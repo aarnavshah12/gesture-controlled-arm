@@ -12,6 +12,7 @@ Safety envelope, enforced here before anything reaches the driver (which checks 
 
 from __future__ import annotations
 
+import collections
 import math
 import threading
 import time
@@ -103,8 +104,9 @@ def hand_to_target(point_norm, ref_norm, origin, box: Box, size_ratio: float | N
 class MotionController(threading.Thread):
     """Fixed-rate control loop. Feed it wrist positions; it streams capped, clamped targets."""
 
-    def __init__(self, arm, box: Box, origin=None, hz: float | None = None, log=None, check=None):
+    def __init__(self, arm, box: Box, origin=None, hz: float | None = None, log=None, check=None, aspect: float = 16 / 9):
         super().__init__(name="gesture-motion", daemon=True)
+        self.aspect = float(aspect)     # frame width / height: the centre zone is a circle on screen
         self.arm = arm
         self.box = box
         self.base_box = box             # the configured box; set_z_floor() raises the floor while carrying
@@ -127,6 +129,9 @@ class MotionController(threading.Thread):
         self.size_ref = None            # apparent palm size at the reference (depth mapping)
         self.size_ema = None
         self.charging = False           # a command gesture is debouncing: stop following the fingertip
+        self._targets = collections.deque(maxlen=64)   # (t, target) history for the pinch rewind
+        self.in_zone = False
+        self._last_seen_t = 0.0
         self.recenter_required = True
         self._recenter_since = None
         self.last_hand_t = 0.0
@@ -155,21 +160,24 @@ class MotionController(threading.Thread):
         """
         with self._lock:
             if wrist_norm is None:
-                self._recenter_since = None     # the centre-hold restarts when the hand comes back
-                self.size_ema = None
+                if t - self._last_seen_t > config.RECENTER_LOSS_GRACE_S:
+                    self._recenter_since = None     # a real loss restarts the hold; a dropped frame does not
+                    self.in_zone = False
+                    self.size_ema = None
                 return
             self.last_hand_t = t
+            self._last_seen_t = t
             if size is not None:
                 a = config.DEPTH_SMOOTHING
                 self.size_ema = size if self.size_ema is None else self.size_ema + a * (size - self.size_ema)
-            if self.charging:
-                return                          # hold the target: forming a pinch moves the fingertip
             if self.holding:
                 self.holding = False
                 self.log.info("mirror: hand back, resuming from hold")
             if self.recenter_required:
-                d = math.hypot(wrist_norm[0] - 0.5, wrist_norm[1] - 0.5)
-                if d <= config.RECENTER_RADIUS:
+                # distance in frame-height units so the zone is a circle on screen, not an ellipse
+                d = math.hypot((wrist_norm[0] - 0.5) * self.aspect, wrist_norm[1] - 0.5)
+                self.in_zone = d <= config.RECENTER_RADIUS
+                if self.in_zone:
                     if self._recenter_since is None:
                         self._recenter_since = t
                     elif t - self._recenter_since >= config.RECENTER_HOLD_S:
@@ -182,6 +190,8 @@ class MotionController(threading.Thread):
                 else:
                     self._recenter_since = None
                 return
+            if self.charging:
+                return                          # hold the target: forming a pinch moves the fingertip
             if self.hand_ref is None:
                 self.hand_ref = (float(wrist_norm[0]), float(wrist_norm[1]))
                 self.size_ref = self.size_ema
@@ -190,6 +200,7 @@ class MotionController(threading.Thread):
             if self.size_ref and self.size_ema:
                 ratio = self.size_ema / self.size_ref
             self.target = hand_to_target(wrist_norm, self.hand_ref, self.origin, self.box, ratio)
+            self._targets.append((t, self.target))
 
     # -- mode changes ---------------------------------------------------------------
     def sync_to_arm(self):
@@ -246,7 +257,9 @@ class MotionController(threading.Thread):
             if recenter:
                 self.hand_ref = None
                 self.size_ref = None
+                self.in_zone = False
             self.target = self.commanded if self.commanded is not None else self.origin
+            self._targets.clear()
             current = self.epoch
         if not self.release_halt_if_current(current):
             with self._lock:
@@ -255,13 +268,39 @@ class MotionController(threading.Thread):
         self.log.info("mirror: resumed (recenter=%s)", recenter)
         return True
 
-    def set_charging(self, on: bool) -> None:
-        """While a command gesture is charging the target is frozen so the action lands where you pointed."""
+    def set_charging(self, on: bool, t: float | None = None) -> None:
+        """While a command gesture is charging the target is frozen so the action lands where you pointed.
+
+        The fingertip curls toward the thumb BEFORE the model can see a pinch, so on the first charging
+        frame the target is rewound to where it was PINCH_FORM_S earlier: the capped loop walks the arm
+        back to the pointed spot during the debounce.
+        """
+        t = time.time() if t is None else t
         with self._lock:
             if on == self.charging:
                 return
             self.charging = on
-        self.log.info("mirror: %s", "gesture charging -> holding target" if on else "following again")
+            rewound = None
+            if on and self._targets:
+                for tt, tg in self._targets:
+                    if tt >= t - config.PINCH_FORM_S:
+                        rewound = tg
+                        break
+                if rewound is None:
+                    rewound = self._targets[-1][1]
+                self.target = rewound
+        if on:
+            self.log.info("mirror: gesture charging -> holding target%s",
+                          "" if rewound is None else f" (rewound to {tuple(round(v) for v in rewound)})")
+        else:
+            self.log.info("mirror: following again")
+
+    def recenter_progress(self) -> float:
+        """0..1 fill of the centre ring while a re-centre is pending (0 when outside the zone)."""
+        with self._lock:
+            if not self.recenter_required or self._recenter_since is None or not self.in_zone:
+                return 0.0
+            return min(1.0, (time.time() - self._recenter_since) / config.RECENTER_HOLD_S)
 
     def set_z_floor(self, z_floor: float | None) -> None:
         """Raise (never lower below the configured) the box floor, e.g. to travel height while carrying."""
@@ -329,7 +368,7 @@ class MotionController(threading.Thread):
                 "actual": self.actual, "ticks": self.ticks, "late": self.late_ticks,
                 "commands": self.commands, "refused": self.refused, "detours": self.detours,
                 "blocked": self.blocked, "epoch": self.epoch, "position_known": self.position_known,
-                "charging": self.charging, "box": self.box,
+                "charging": self.charging, "box": self.box, "in_zone": self.in_zone,
             }
 
     def run(self) -> None:

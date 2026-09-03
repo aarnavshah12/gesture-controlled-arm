@@ -290,7 +290,7 @@ def main(argv=None) -> int:
              config.VELOCITY_CAP_MM_S, config.CONTROL_HZ)
 
     from gesture.routines import Routines
-    controller = MotionController(arm, box, check=check)
+    controller = MotionController(arm, box, check=check, aspect=cam.width / max(1, cam.height))
     controller.sync_to_arm()
     controller.start()
     routines = Routines(arm, dry_run=args.dry_run, mac_camera_index=cam.index, box=box)
@@ -389,7 +389,7 @@ def main(argv=None) -> int:
                     elif ev.name != "FREEZE":
                         toasts.add(f"{text} ignored ({sm.last_refusal or mode_before.lower()})", viz.GREY, t)
                 # a charging command gesture holds the target (a forming pinch moves the fingertip)
-                controller.set_charging(deb.cls in config.GESTURE_EVENTS and deb.count >= 1 and not deb.fired)
+                controller.set_charging(deb.cls in config.GESTURE_EVENTS and deb.count >= 1 and not deb.fired, t)
             actions.drain()   # routine completions, delivered on this thread
 
             # overlay
@@ -397,14 +397,18 @@ def main(argv=None) -> int:
             pred = last_res.top if (last_res is not None and t - last_res.t < max(0.35, 2.5 * last_res.ms / 1000.0)) else None
             progress = deb.progress if (pred is not None and pred.cls == deb.cls) else 0.0
             snap = controller.snapshot()
+            center = None
             if sm.mode == FROZEN:
                 sub = "open palm to resume"
             elif sm.mode == ROUTINE:
                 sub = f"{routines.current or ''}  {routines.status}".strip()
             elif snap["recenter"]:
-                sub = "centre your index finger to start"
+                sub = ""
+                center = dict(progress=controller.recenter_progress(), in_zone=snap["in_zone"])
             elif snap["holding"]:
-                sub = "no hand - holding"
+                sub = "no hand: holding"
+            elif not snap["position_known"]:
+                sub = "arm position unknown: thumbs-up to re-sync"
             else:
                 sub = ""
             if sm.mode == ROUTINE:
@@ -423,7 +427,7 @@ def main(argv=None) -> int:
                                   label="planned target (dry run)" if args.dry_run else "arm target")
             img = viz.render(frame, hand=hand, connections=tracker.connections, pred=pred, progress=progress,
                              trail=list(trail), mode=sm.mode, mode_sub=sub, toasts=toasts, status=status,
-                             clean=clean, target_map=target_map, t=t)
+                             clean=clean, target_map=target_map, center=center, t=t)
             if args.record:
                 if writer is None:
                     hh, ww = img.shape[:2]

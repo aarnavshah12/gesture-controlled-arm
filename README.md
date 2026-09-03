@@ -55,9 +55,12 @@ PICK, its `calibration.npy`, model and overhead camera. Nothing from it is copie
 Keys: `q`/Esc quit, `c` toggle the status strip, `f` toggle full screen, `r` re-centre the hand reference
 (only in MIRROR; it never un-freezes).
 
-Mirroring starts when your index fingertip sits in the centre of the frame for a moment (the banner says
-so). Then finger left/right = arm x, finger up/down = arm z, inside a fixed box in front of the arm. No hand
-for 1 s = the arm holds. After HOME or FLOURISH you re-centre again; after GRAB / PLACE you just carry on.
+Steering starts with the ring in the middle of the frame: hold your index fingertip inside it and it fills
+green in under half a second. Then finger left/right = arm x, finger up/down = arm z, inside a fixed box in
+front of the arm. No hand for 1 s = the arm holds. After HOME, FLOURISH or any freeze you re-centre again;
+after GRAB / PLACE you just carry on. The overlay is deliberately quiet: the box, the skeleton with a ring on
+the steering fingertip, a short trail, the mode pill (FROZEN is a solid red banner), one toast at a time, the
+bottom-right map of the arm's box, and a thin status strip that `--clean` removes.
 Optional depth (hand closer to the camera = arm forward) is `MIRROR_DEPTH` in `gesture/config.py`, off by
 default because it is the noisiest axis.
 
