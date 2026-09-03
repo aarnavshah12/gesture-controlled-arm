@@ -75,14 +75,25 @@ class RoutinesTest(unittest.TestCase):
         self.assertTrue(done.wait(timeout), "routine did not finish")
         return result["ok"]
 
-    def test_flourish_runs_all_steps(self):
+    def test_flourish_is_a_handshake_in_place(self):
         arm = FakeArm()
-        r = Routines(arm, dry_run=True, log=silent_logger())
+        arm.commanded = (30.0, -180.0, 150.0)
+        r = Routines(arm, dry_run=True, log=silent_logger(), box=((-200.0, 200.0), (-250.0, -130.0), (115.0, 200.0)))
         self.assertTrue(self.run_routine(r, "FLOURISH"))
-        self.assertEqual(len(arm.moves), 1 + len(config.FLOURISH_STEPS))
-        ox, oy, oz = config.MIRROR_ORIGIN_XYZ_MM
-        self.assertEqual(arm.moves[0][:3], (ox, oy, oz))
+        n = config.HANDSHAKE_PUMPS
+        self.assertEqual(len(arm.moves), 2 * n + 1)
+        zs = [m[2] for m in arm.moves]
+        self.assertEqual(zs[:2], [125.0, 175.0])                     # +-25 around 150
+        self.assertEqual(zs[-1], 150.0)                              # verified return to the start height
+        self.assertTrue(all(m[:2] == (30.0, -180.0) for m in arm.moves))   # never leaves the spot
         self.assertIsNone(r.current)
+
+    def test_handshake_respects_the_box_floor(self):
+        arm = FakeArm()
+        arm.commanded = (0.0, -175.0, 115.0)                          # already at the floor
+        r = Routines(arm, dry_run=True, log=silent_logger(), box=((-200.0, 200.0), (-250.0, -130.0), (115.0, 200.0)))
+        self.assertTrue(self.run_routine(r, "FLOURISH"))
+        self.assertGreaterEqual(min(m[2] for m in arm.moves), 115.0)
 
     def _fixed_heights(self):
         config.GRAB_Z_MM, config.GRAB_HOVER_MM, config.PLACE_LIFT_MM = 84.0, 40.0, 20.0
@@ -191,6 +202,7 @@ class RoutinesTest(unittest.TestCase):
         r = Routines(arm, dry_run=True, log=silent_logger())
         done = threading.Event()
         result = {}
+        arm.commanded = (0.0, -175.0, 150.0)
         r.start("FLOURISH", lambda ok: (result.__setitem__("ok", ok), done.set()))
         time.sleep(0.1)                      # inside the first 300 ms move
         t0 = time.time()
@@ -212,6 +224,7 @@ class RoutinesTest(unittest.TestCase):
         arm = FakeArm(step_s=0.2)
         r = Routines(arm, dry_run=True, log=silent_logger())
         first = threading.Event()
+        arm.commanded = (0.0, -175.0, 150.0)
         r.start("FLOURISH", lambda ok: first.set())
         time.sleep(0.05)
         got = []
@@ -223,6 +236,7 @@ class RoutinesTest(unittest.TestCase):
     def test_abort_and_join(self):
         arm = FakeArm(step_s=0.3)
         r = Routines(arm, dry_run=True, log=silent_logger())
+        arm.commanded = (0.0, -175.0, 150.0)
         r.start("FLOURISH", lambda ok: None)
         time.sleep(0.05)
         self.assertTrue(r.abort_and_join(2.0))
@@ -238,6 +252,7 @@ class RoutinesTest(unittest.TestCase):
                 return super().move_to(x, y, z, ms)
         r.arm = Stuck(step_s=0.05)
         r.arm.tick = r._tick
+        r.arm.commanded = (0.0, -175.0, 150.0)
         r.start("FLOURISH", lambda ok: None)
         time.sleep(0.05)
         r.abort()
@@ -258,6 +273,7 @@ class RoutinesTest(unittest.TestCase):
         arm = FakeArm(step_s=0.2)
         r = Routines(arm, dry_run=True, log=silent_logger())
         done = threading.Event()
+        arm.commanded = (0.0, -175.0, 150.0)
         r.start("FLOURISH", lambda ok: done.set())
         time.sleep(0.05)
         r.abort()

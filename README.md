@@ -25,7 +25,7 @@ the wrist trail, the mode banner, event toasts and a status strip, all drawn eve
 | `open-palm` | RELEASE / PLACE / RESUME | Holding something: descend, release just above the block, lift back up. Otherwise a plain release. From FROZEN: the only way out (plain release). |
 | `fist` | FREEZE | Dead-man switch. Halts where it is, ignores everything except `open-palm`. Aborts any routine. |
 | `thumbs-up` | HOME | Goes to the home pose. Mirroring resumes once your finger is back in the centre of the frame. |
-| `peace` | FLOURISH | A scripted wave and nod. Accepted only if the landmarks agree it is two fingers (index + middle up, ring + pinky down); otherwise it counts as `point`, labelled `point (lm)`. (Map `"peace": "PICK"` in `gesture/config.py` for the block picker's autonomous pick instead.) |
+| `peace` | FLOURISH | A handshake: four quick up-and-down pumps right where the arm is, then back to the start height. Refused while holding. Accepted only if the landmarks agree it is two fingers (index + middle up, ring + pinky down); otherwise it counts as `point`, labelled `point (lm)`. (Map `"peace": "PICK"` in `gesture/config.py` for the block picker's autonomous pick instead.) |
 
 An event fires after 5 consecutive accepted predictions above 0.7 confidence (`gesture/config.py`), once
 per hold; a flickering prediction fires nothing. The arc on the box shows the charge.

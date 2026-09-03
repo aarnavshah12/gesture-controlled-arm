@@ -217,14 +217,26 @@ class Routines:
         self.arm.home()
 
     def _flourish(self) -> None:
-        ox, oy, oz = config.MIRROR_ORIGIN_XYZ_MM
-        self.status = "wave"
-        self._check("before flourish")
-        self.arm.move_to(ox, oy, oz, 800)
-        for i, (dx, dy, dz, ms) in enumerate(config.FLOURISH_STEPS):
-            self._check(f"flourish step {i}")
-            self.status = f"wave {i + 1}/{len(config.FLOURISH_STEPS)}"
-            self.arm.move_to(ox + dx, oy + dy, oz + dz, ms)
+        """Handshake: pump the cup up and down where it is, then a verified return to the start height."""
+        x, y, z0 = self._where()
+        amp, pumps, ms = config.HANDSHAKE_AMPLITUDE_MM, config.HANDSHAKE_PUMPS, config.HANDSHAKE_STROKE_MS
+        zlo, zhi = self.box[2] if self.box is not None else (z0 - amp, z0 + amp)
+        hi = min(z0 + amp, zhi)
+        lo = max(hi - 2 * amp, zlo)
+        stream = getattr(self.arm, "stream_to", None)   # fake arms without it fall back to move_to
+        self.log.info("routine FLOURISH: handshake at (%.0f, %.0f) z %.0f..%.0f, %d pumps x %d ms", x, y, lo, hi, pumps, ms)
+        self._check("before handshake")
+        for i in range(pumps):
+            self.status = f"shake {i + 1}/{pumps}"
+            for z in (lo, hi):
+                self._check(f"handshake {i}")
+                if stream is not None:
+                    stream(x, y, z, ms)
+                else:
+                    self.arm.move_to(x, y, z, ms)
+                self.arm.wait(ms / 1000.0)
+        self.status = "settling"
+        self.arm.move_to(x, y, z0, 400)
 
     def _pick(self) -> None:
         problems = bp.check()

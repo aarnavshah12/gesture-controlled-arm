@@ -144,12 +144,12 @@ GRAB_DESCENT_MS = 700                   # slow final descent
 # left from, so the finger -> arm mapping is still valid and mirroring just continues.
 RESUME_RECENTER = {"HOME": True, "PICK": True, "FLOURISH": True, "GRAB": False, "PLACE": False}
 
-# FLOURISH: scripted wave then nod, as offsets (dx, dy, dz, ms) from MIRROR_ORIGIN_XYZ_MM.
-FLOURISH_STEPS = [
-    (60.0, 0.0, 0.0, 600), (-60.0, 0.0, 0.0, 600), (60.0, 0.0, 0.0, 600), (-60.0, 0.0, 0.0, 600),
-    (0.0, 0.0, 0.0, 600), (0.0, 0.0, 30.0, 500), (0.0, 0.0, -20.0, 500), (0.0, 0.0, 30.0, 500),
-    (0.0, 0.0, 0.0, 600),
-]
+# FLOURISH (peace) = a handshake: quick up-and-down pumps right where the arm is (owner 2026-09-03: the
+# old side-to-side wave "looked nothing like a handshake"). Strokes are streamed (no per-stroke read-back)
+# so the cadence is real; one verified move returns to the start height at the end.
+HANDSHAKE_AMPLITUDE_MM = 25.0   # half-stroke: the cup moves 2x this between the low and high points
+HANDSHAKE_PUMPS = 4             # down-up cycles
+HANDSHAKE_STROKE_MS = 220       # one stroke (down or up)
 
 # PICK routine: the block picker's own camera, model, homography and loop, run once.
 PICK_CAMERA_INDEX: int | None = None   # None = block-picker config.WEBCAM_INDEX
