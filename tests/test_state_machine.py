@@ -10,9 +10,13 @@ class FakeActions(Actions):
         self.calls = []
         self.pending = []   # (name, done)
         self.gripping = False
+        self.grab_ok = (True, "")
 
     def is_gripping(self):
         return self.gripping
+
+    def can_grab(self):
+        return self.grab_ok
 
     def freeze(self):
         self.calls.append("freeze")
@@ -60,6 +64,28 @@ class StateMachineTest(unittest.TestCase):
         done(True)
         self.assertEqual(self.sm.mode, MIRROR)
         self.assertEqual(self.a.calls[-1], "resume(False)")     # finger mapping still valid
+
+    def test_grab_refused_when_not_steering(self):
+        self.a.grab_ok = (False, "re-centre your finger first")
+        self.assertFalse(self.sm.on_event(ev("GRAB", "pinch")))
+        self.assertEqual(self.sm.mode, MIRROR)
+        self.assertEqual(self.a.calls, [])
+        self.assertEqual(self.sm.last_refusal, "re-centre your finger first")
+        # holding + not steering: open-palm is a plain release, never a PLACE somewhere unplanned
+        self.a.gripping = True
+        self.assertTrue(self.sm.on_event(ev("RELEASE", "open-palm")))
+        self.assertEqual(self.a.calls, ["release"])
+
+    def test_flourish_refused_while_holding(self):
+        self.a.gripping = True
+        self.assertFalse(self.sm.on_event(ev("FLOURISH", "peace")))
+        self.assertEqual(self.sm.mode, MIRROR)
+
+    def test_failed_routine_resumes_with_recentre(self):
+        self.sm.on_event(ev("GRAB", "pinch"))
+        _, done = self.a.pending.pop()
+        done(False)
+        self.assertEqual(self.a.calls[-1], "resume(True)")
 
     def test_second_grab_while_holding_is_refused(self):
         self.a.gripping = True

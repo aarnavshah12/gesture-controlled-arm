@@ -126,6 +126,7 @@ class MotionController(threading.Thread):
         self.hand_ref = None
         self.size_ref = None            # apparent palm size at the reference (depth mapping)
         self.size_ema = None
+        self.charging = False           # a command gesture is debouncing: stop following the fingertip
         self.recenter_required = True
         self._recenter_since = None
         self.last_hand_t = 0.0
@@ -161,6 +162,8 @@ class MotionController(threading.Thread):
             if size is not None:
                 a = config.DEPTH_SMOOTHING
                 self.size_ema = size if self.size_ema is None else self.size_ema + a * (size - self.size_ema)
+            if self.charging:
+                return                          # hold the target: forming a pinch moves the fingertip
             if self.holding:
                 self.holding = False
                 self.log.info("mirror: hand back, resuming from hold")
@@ -231,9 +234,13 @@ class MotionController(threading.Thread):
             if not self.position_known:
                 self.log.error("mirror: resume refused: arm position unknown")
                 return False
+            if not recenter and self.hand_ref is None:
+                self.log.info("mirror: no hand reference yet -> re-centre required")
+                recenter = True
             self.enabled = True
             self.frozen = False
             self.holding = False
+            self.charging = False
             self.recenter_required = recenter
             self._recenter_since = None
             if recenter:
@@ -247,6 +254,14 @@ class MotionController(threading.Thread):
             return False
         self.log.info("mirror: resumed (recenter=%s)", recenter)
         return True
+
+    def set_charging(self, on: bool) -> None:
+        """While a command gesture is charging the target is frozen so the action lands where you pointed."""
+        with self._lock:
+            if on == self.charging:
+                return
+            self.charging = on
+        self.log.info("mirror: %s", "gesture charging -> holding target" if on else "following again")
 
     def set_z_floor(self, z_floor: float | None) -> None:
         """Raise (never lower below the configured) the box floor, e.g. to travel height while carrying."""
@@ -286,6 +301,10 @@ class MotionController(threading.Thread):
             self.enabled = False
             self.frozen = True
             self.epoch += 1
+            self.recenter_required = True   # after a freeze the finger must be re-centred before following
+            self.hand_ref = None
+            self.size_ref = None
+            self.charging = False
         self.log.info("mirror: FREEZE -> halting arm")
         try:
             self.arm.halt()
@@ -310,6 +329,7 @@ class MotionController(threading.Thread):
                 "actual": self.actual, "ticks": self.ticks, "late": self.late_ticks,
                 "commands": self.commands, "refused": self.refused, "detours": self.detours,
                 "blocked": self.blocked, "epoch": self.epoch, "position_known": self.position_known,
+                "charging": self.charging, "box": self.box,
             }
 
     def run(self) -> None:

@@ -98,6 +98,20 @@ class GestureArmTest(unittest.TestCase):
         frames = [f for f in a._ser.written if f[2] == 0x03]
         self.assertEqual(frames, [garm._bp.arm.set_xyz_frame(20, -190, 130, config.HALT_MOVE_MS)])
 
+    def test_halt_at_rest_resends_commanded_not_noisy_readback(self):
+        a = self.live_arm(xyz=(20, -190, 77))         # cup pressed on a block, read-back 7 mm low
+        a.commanded = (20.0, -190.0, 84.0)
+        a.halt()
+        frames = [f for f in a._ser.written if f[2] == 0x03]
+        self.assertEqual(frames, [garm._bp.arm.set_xyz_frame(20, -190, 84, config.HALT_MOVE_MS)])
+
+    def test_halt_in_flight_uses_readback(self):
+        a = self.live_arm(xyz=(20, -190, 150))
+        a.commanded = (120.0, -190.0, 150.0)          # 100 mm from the read-back: still moving
+        a.halt()
+        frames = [f for f in a._ser.written if f[2] == 0x03]
+        self.assertEqual(frames, [garm._bp.arm.set_xyz_frame(20, -190, 150, config.HALT_MOVE_MS)])
+
     def test_halt_clamps_noisy_readback_into_reach(self):
         (xlo, xhi), (ylo, yhi), (zlo, zhi) = garm.reach_box()
         a = self.live_arm(xyz=(int(xhi) + 5, int(yhi) + 3, int(zlo) - 4))

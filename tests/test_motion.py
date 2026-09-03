@@ -12,6 +12,12 @@ BOX = ((-115.0, 145.0), (-250.0, -130.0), (100.0, 200.0))
 ORIGIN = (0.0, -175.0, 150.0)
 
 
+def follow(c):
+    """Resume without a re-centre the way the app does after GRAB/PLACE: a hand reference already exists."""
+    c.hand_ref = (0.5, 0.5)
+    return c.resume(recenter=False)
+
+
 class FakeArm:
     dry_run = True
 
@@ -116,7 +122,7 @@ class ControllerTest(unittest.TestCase):
 
     def test_velocity_cap_every_tick(self):
         arm, c = self.make()
-        c.resume(recenter=False)
+        follow(c)
         c.update_hand((0.5, 0.5), 0.0)
         c.update_hand((1.0, 0.5), 0.1)          # big jump requested
         prev = ORIGIN
@@ -129,7 +135,7 @@ class ControllerTest(unittest.TestCase):
 
     def test_no_hand_holds(self):
         arm, c = self.make()
-        c.resume(recenter=False)
+        follow(c)
         c.update_hand((0.5, 0.5), 0.0)
         c.update_hand((0.7, 0.5), 0.5)
         c._tick(0.6)
@@ -145,7 +151,7 @@ class ControllerTest(unittest.TestCase):
 
     def test_freeze_halts_and_stops_streaming(self):
         arm, c = self.make()
-        c.resume(recenter=False)
+        follow(c)
         c.update_hand((0.5, 0.5), 0.0)
         c.update_hand((0.9, 0.5), 0.1)
         c._tick(0.1)
@@ -161,7 +167,7 @@ class ControllerTest(unittest.TestCase):
 
     def test_pause_stops_streaming(self):
         arm, c = self.make()
-        c.resume(recenter=False)
+        follow(c)
         c.update_hand((0.5, 0.5), 0.0)
         c.pause()
         c.update_hand((0.9, 0.5), 0.1)
@@ -170,7 +176,7 @@ class ControllerTest(unittest.TestCase):
 
     def test_refused_command_keeps_commanded_point(self):
         arm, c = self.make(FakeArm(refuse=True))
-        c.resume(recenter=False)
+        follow(c)
         c.update_hand((0.5, 0.5), 0.0)
         c.update_hand((0.9, 0.5), 0.1)
         c._tick(0.1)
@@ -181,7 +187,7 @@ class ControllerTest(unittest.TestCase):
 
     def test_stale_resume_is_ignored_after_freeze(self):
         arm, c = self.make()
-        c.resume(recenter=False)
+        follow(c)
         epoch = c.epoch
         c.freeze()
         self.assertFalse(c.resume(recenter=True, epoch=epoch))
@@ -203,7 +209,7 @@ class ControllerTest(unittest.TestCase):
         arm, c = self.make(LiveArm())
         self.assertIsNone(c.sync_to_arm())
         self.assertFalse(c.position_known)
-        self.assertFalse(c.resume(recenter=False))
+        self.assertFalse(follow(c))
         c.enabled = True                      # even if something enabled it
         c.update_hand((0.5, 0.5), 0.0)
         c.update_hand((0.9, 0.5), 0.1)
@@ -211,7 +217,7 @@ class ControllerTest(unittest.TestCase):
         self.assertEqual(arm.streams, [])
         arm.read_xyz = lambda: (0, -175, 150)
         self.assertEqual(c.sync_to_arm(), (0, -175, 150))
-        self.assertTrue(c.resume(recenter=False))
+        self.assertTrue(follow(c))
 
     def test_live_sync_never_adopts_commanded(self):
         class LiveArm(FakeArm):
@@ -221,7 +227,7 @@ class ControllerTest(unittest.TestCase):
         _, c = self.make(arm)
         self.assertIsNone(c.sync_to_arm())
         self.assertFalse(c.position_known)
-        self.assertFalse(c.resume(recenter=False))
+        self.assertFalse(follow(c))
 
     def test_release_halt_only_if_epoch_current(self):
         class InhibitArm(FakeArm):
@@ -238,7 +244,7 @@ class ControllerTest(unittest.TestCase):
                 self.inhibited = False
         arm = InhibitArm()
         _, c = self.make(arm)
-        c.resume(recenter=False)
+        follow(c)
         epoch = c.epoch
         c.freeze()
         self.assertTrue(arm.inhibited)
@@ -257,9 +263,33 @@ class ControllerTest(unittest.TestCase):
         c.update_hand((0.5, 0.5), 0.2 + config.RECENTER_HOLD_S + 0.01)
         self.assertFalse(c.recenter_required)
 
+    def test_charging_holds_the_target(self):
+        arm, c = self.make()
+        follow(c)
+        c.update_hand((0.5, 0.5), 0.0)
+        c.update_hand((0.6, 0.5), 0.1)
+        held = c.target
+        c.set_charging(True)
+        c.update_hand((0.9, 0.9), 0.2)            # the fingertip moves while the pinch forms
+        self.assertEqual(c.target, held)
+        c.set_charging(False)
+        c.update_hand((0.9, 0.9), 0.3)
+        self.assertNotEqual(c.target, held)
+
+    def test_freeze_requires_recentre_and_resume_without_ref_forces_it(self):
+        arm, c = self.make()
+        follow(c)
+        c.update_hand((0.5, 0.5), 0.0)
+        self.assertIsNotNone(c.hand_ref)
+        c.freeze()
+        self.assertTrue(c.recenter_required)
+        self.assertIsNone(c.hand_ref)
+        self.assertTrue(c.resume(recenter=False, epoch=c.epoch))
+        self.assertTrue(c.recenter_required)      # no reference -> re-centre forced
+
     def test_z_floor_raises_and_resets(self):
         arm, c = self.make()
-        c.resume(recenter=False)
+        follow(c)
         c.update_hand((0.5, 0.5), 0.0)
         c.update_hand((0.5, 0.9), 0.1)            # finger low -> target at the box floor
         self.assertEqual(c.target[2], BOX[2][0])
@@ -274,7 +304,7 @@ class ControllerTest(unittest.TestCase):
 
     def test_targets_always_inside_box(self):
         arm, c = self.make()
-        c.resume(recenter=False)
+        follow(c)
         c.update_hand((0.5, 0.5), 0.0)
         for w in ((0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0)):
             c.update_hand(w, 1.0)
@@ -300,7 +330,7 @@ class DetourTest(unittest.TestCase):
         c = MotionController(arm, BOX, ORIGIN, hz=10.0, log=silent_logger(), check=self.check)
         arm.commanded = self.HOME
         c.sync_to_arm()
-        c.resume(recenter=False)
+        follow(c)
         c.update_hand((0.5, 0.5), 0.0)
         for k in range(max_ticks):
             c.last_hand_t = 0.1 * k              # hand stays "present"; the target is pinned below

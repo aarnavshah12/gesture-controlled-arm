@@ -94,7 +94,7 @@ BLOCK_PICKER_DIR = os.path.expanduser("~/Documents/Defect-detect bot")
 # with margin. Always intersected with the block picker's REACH_* at start-up; never wider.
 MIRROR_X_MM = (-115.0, 145.0)
 MIRROR_Y_MM = (-250.0, -130.0)   # near edge kept outside the block picker's 120 mm base keep-out radius
-MIRROR_Z_MM = (100.0, 200.0)     # floor clears a 40 mm block on the table (47 + 40) with margin
+MIRROR_Z_MM = (115.0, 200.0)     # floor clears a 40 mm block on the table (top at 87) by 28 mm: ~8 mm read-back noise + height drift near the base
 # Where the cup sits when the hand is at its reference point: centre of the box, at a height the
 # arm reached throughout calibration (61 % of full stretch).
 MIRROR_ORIGIN_XYZ_MM = (0.0, -175.0, 150.0)

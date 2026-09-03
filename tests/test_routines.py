@@ -93,6 +93,45 @@ class RoutinesTest(unittest.TestCase):
         self.assertEqual(arm.events[2], ("suction", True))      # after the descent, before the lift
         self.assertTrue(arm.gripping)
 
+    def test_grab_column_clamped_into_box(self):
+        self._fixed_heights()
+        arm = FakeArm()
+        arm.commanded = (150.0, -257.0, 150.0)        # noisy read past the box edge
+        r = Routines(arm, dry_run=True, log=silent_logger(), box=((-115.0, 145.0), (-250.0, -130.0), (115.0, 200.0)))
+        self.assertTrue(self.run_routine(r, "GRAB"))
+        self.assertEqual(arm.moves[0][:2], (145.0, -250.0))
+
+    def test_refused_descent_retreats_to_hover(self):
+        from gesture.routines import MoveRefused
+        self._fixed_heights()
+
+        class Blocked(FakeArm):
+            def move_to(self, x, y, z, ms=None):
+                if z == 84.0:
+                    raise MoveRefused("stack in the way")
+                return super().move_to(x, y, z, ms)
+        arm = Blocked()
+        arm.commanded = (0.0, -175.0, 150.0)
+        r = Routines(arm, dry_run=True, log=silent_logger())
+        self.assertFalse(self.run_routine(r, "GRAB"))
+        self.assertEqual([m[2] for m in arm.moves], [124.0, 124.0])   # hover, (refused), retreat to hover
+        self.assertNotIn(("suction", True), arm.events)
+
+    def test_heights_default_in_dry_run_without_block_picker(self):
+        from gesture import bp, routines
+        config.GRAB_Z_MM = config.GRAB_HOVER_MM = config.PLACE_LIFT_MM = None
+        orig = bp.load
+        bp.load = lambda: (_ for _ in ()).throw(bp.BlockPickerMissing("absent"))
+        try:
+            r = Routines(FakeArm(), dry_run=True, log=silent_logger())
+            self.assertEqual(r._heights(), routines.DEFAULT_HEIGHTS)
+            r = Routines(FakeArm(), dry_run=False, log=silent_logger())
+            with self.assertRaises(bp.BlockPickerMissing):
+                r._heights()
+        finally:
+            bp.load = orig
+            self._fixed_heights()
+
     def test_grab_from_below_hover_returns_to_hover_not_lower(self):
         self._fixed_heights()
         arm = FakeArm()
@@ -109,7 +148,7 @@ class RoutinesTest(unittest.TestCase):
         r = Routines(arm, dry_run=True, log=silent_logger())
         self.assertTrue(self.run_routine(r, "PLACE"))
         self.assertEqual([m[2] for m in arm.moves], [124.0, 104.0, 124.0, 160.0])
-        self.assertEqual(arm.events[2], ("release",))
+        self.assertEqual(arm.events[2], ("suction", False))
         self.assertFalse(arm.gripping)
 
     def test_grab_aborts_mid_descent(self):

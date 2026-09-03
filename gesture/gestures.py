@@ -142,6 +142,7 @@ class Actions:
     def release(self) -> None: ...
     def grip(self) -> None: ...
     def is_gripping(self) -> bool: return False
+    def can_grab(self) -> tuple[bool, str]: return True, ""   # steering established and inside the box?
     def resume_mirror(self, recenter: bool) -> None: ...
     def pause_mirror(self) -> None: ...
     def start_routine(self, name: str, done: Callable[[bool], None]) -> None: ...
@@ -165,6 +166,7 @@ class StateMachine:
         self._routine_seq = 0
         self.history: list[Transition] = []
         self.last_event: Event | None = None
+        self.last_refusal = ""          # why the last event was ignored (for the toast)
 
     def _set_mode(self, to: str, why: str) -> None:
         if to not in MODES:
@@ -188,20 +190,28 @@ class StateMachine:
                 self._set_mode(MIRROR, "open-palm released the freeze")
                 self.actions.resume_mirror(recenter=True)
                 return True
-            self.log.info("event %s ignored: FROZEN (only open-palm resumes)", ev.name)
-            return False
+            return self._ignore(ev, "frozen")
         if self.mode == ROUTINE:
-            self.log.info("event %s ignored: routine %s in progress (fist aborts)", ev.name, self.routine)
-            return False
+            return self._ignore(ev, f"routine {self.routine}")
         # MIRROR
-        if ev.name == "GRAB" and self.actions.is_gripping():
-            self.log.info("event GRAB ignored: already holding something (open-palm to place it)")
-            return False
+        if ev.name == "GRAB":
+            if self.actions.is_gripping():
+                return self._ignore(ev, "already holding")
+            ok, why = self.actions.can_grab()
+            if not ok:
+                return self._ignore(ev, why)
+        if ev.name == "FLOURISH" and self.actions.is_gripping():
+            return self._ignore(ev, "holding a block")
         if ev.name == "GRIP":
             self.actions.grip()                 # plain "pump on" in place (not mapped by default)
         elif ev.name == "RELEASE":
             if self.actions.is_gripping():
-                self._start_routine("PLACE")    # holding something: set it down, don't drop it from height
+                ok, why = self.actions.can_grab()
+                if ok:
+                    self._start_routine("PLACE")    # holding something: set it down, don't drop it from height
+                else:
+                    self.log.warning("RELEASE while holding but %s: plain release (the object drops here)", why)
+                    self.actions.release()
             else:
                 self.actions.release()
         elif ev.name in ROUTINE_EVENTS:
@@ -210,6 +220,11 @@ class StateMachine:
             self.log.warning("event %s has no handler", ev.name)
             return False
         return True
+
+    def _ignore(self, ev: Event, why: str) -> bool:
+        self.last_refusal = why
+        self.log.info("event %s ignored: %s", ev.name, why)
+        return False
 
     def _freeze(self, ev: Event) -> bool:
         if self.mode == FROZEN:
@@ -247,7 +262,8 @@ class StateMachine:
         if self.mode == ROUTINE:
             self.routine = None
             self._set_mode(MIRROR, f"{name} {'done' if ok else 'failed'}")
-            self.actions.resume_mirror(recenter=config.RESUME_RECENTER.get(name, True))
+            # a failed routine leaves the arm somewhere unplanned: re-centre before following again
+            self.actions.resume_mirror(recenter=config.RESUME_RECENTER.get(name, True) or not ok)
 
     @property
     def banner(self) -> str:

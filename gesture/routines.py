@@ -15,6 +15,19 @@ import time
 from typing import Callable
 
 from . import bp, config, runlog
+from .motion import clamp_box
+
+try:  # the driver's exception types, when the block picker is present
+    _bp_arm = bp.load().arm
+    MoveRefused, UnsafeTarget = _bp_arm.MoveRefused, _bp_arm.UnsafeTarget
+except Exception:  # noqa: BLE001 - dry-run without the block picker
+    class MoveRefused(Exception):  # type: ignore[no-redef]
+        pass
+
+    class UnsafeTarget(Exception):  # type: ignore[no-redef]
+        pass
+
+DEFAULT_HEIGHTS = (84.0, 40.0, 20.0)   # pick z, hover, place lift: the block picker's values, for dry-run without it
 
 
 class RoutineAborted(Exception):
@@ -24,10 +37,11 @@ class RoutineAborted(Exception):
 class Routines:
     NAMES = ("HOME", "PICK", "FLOURISH", "GRAB", "PLACE")
 
-    def __init__(self, arm, dry_run: bool, log=None, mac_camera_index: int | None = None):
+    def __init__(self, arm, dry_run: bool, log=None, mac_camera_index: int | None = None, box=None):
         self.arm = arm
         self.dry_run = dry_run
         self.mac_camera_index = mac_camera_index   # PICK must never open the camera the main loop is using
+        self.box = box                             # the steering box: GRAB/PLACE columns are clamped into its x/y
         self.log = log or runlog.get_logger()
         self._abort = threading.Event()
         self._thread: threading.Thread | None = None
@@ -110,7 +124,15 @@ class Routines:
         """(pick z, hover offset, place lift) from config, falling back to the block picker's values."""
         pick_z, hover, lift = config.GRAB_Z_MM, config.GRAB_HOVER_MM, config.PLACE_LIFT_MM
         if pick_z is None or hover is None or lift is None:
-            c = bp.load().config
+            try:
+                c = bp.load().config
+            except bp.BlockPickerMissing:
+                if not self.dry_run:
+                    raise
+                self.log.warning("block picker absent: GRAB/PLACE heights default to %s (dry-run only)", DEFAULT_HEIGHTS)
+                d = DEFAULT_HEIGHTS
+                return (float(pick_z if pick_z is not None else d[0]), float(hover if hover is not None else d[1]),
+                        float(lift if lift is not None else d[2]))
             if pick_z is None:
                 pick_z = c.require("TABLE_Z_MM") + c.BLOCK_HEIGHT_MM - c.CUP_PRESS_MM
             if hover is None:
@@ -131,7 +153,26 @@ class Routines:
             pos = getattr(self.arm, "commanded", None)
         if pos is None:
             raise RuntimeError("arm position unknown: cannot grab/place here")
-        return float(pos[0]), float(pos[1]), float(pos[2])
+        x, y, z = (float(v) for v in pos)
+        # read-back is ~8 mm noisy: keep the column inside the steering box (the calibrated pick area) so a
+        # reading just past the edge does not turn into a refused move or a descent outside the area
+        if self.box is not None:
+            (xlo, xhi), (ylo, yhi), _ = self.box
+            x, y = min(max(x, xlo), xhi), min(max(y, ylo), yhi)
+        return x, y, z
+
+    def _descend(self, x: float, y: float, hover_z: float, low_z: float, what: str) -> None:
+        """Hover, then slowly down. A refused descent (something in the way) retreats to hover first."""
+        self.arm.move_to(x, y, hover_z)
+        try:
+            self.arm.move_to(x, y, low_z, config.GRAB_DESCENT_MS)
+        except MoveRefused:
+            self.log.error("routine %s: descent to z=%.0f refused (obstacle?); retreating to hover", what, low_z)
+            try:
+                self.arm.move_to(x, y, hover_z)
+            except Exception as e:  # noqa: BLE001
+                self.log.error("routine %s: retreat refused too: %r", what, e)
+            raise
 
     def _grab(self) -> None:
         """Descend at the current (x, y), suction on, come back up to where we were."""
@@ -142,8 +183,7 @@ class Routines:
                       x, y, z0, pick_z + hover, pick_z, z_top)
         self._check("before grab")
         self.status = "descending"
-        self.arm.move_to(x, y, pick_z + hover)
-        self.arm.move_to(x, y, pick_z, config.GRAB_DESCENT_MS)
+        self._descend(x, y, pick_z + hover, pick_z, "GRAB")
         self.status = "suction on"
         self.arm.suction(True)
         self.arm.wait(config.GRAB_SUCTION_PAUSE_S)
@@ -160,10 +200,9 @@ class Routines:
                       x, y, z0, pick_z + hover, pick_z + lift, z_top)
         self._check("before place")
         self.status = "descending"
-        self.arm.move_to(x, y, pick_z + hover)
-        self.arm.move_to(x, y, pick_z + lift, config.GRAB_DESCENT_MS)
+        self._descend(x, y, pick_z + hover, pick_z + lift, "PLACE")
         self.status = "releasing"
-        self.arm.release()                       # vent, wait, valve close (the cup is not pressed here)
+        self.arm.suction(False)                  # vent, wait, valve close: the intended set-down, 20 mm up
         self.status = "lifting"
         self.arm.move_to(x, y, pick_z + hover)
         self.arm.move_to(x, y, z_top)

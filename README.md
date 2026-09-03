@@ -21,7 +21,7 @@ the wrist trail, the mode banner, event toasts and a status strip, all drawn eve
 | Gesture (model class) | Event | What the arm does |
 |---|---|---|
 | `point` | (steer) | The steering pose: the arm follows your index fingertip. Never fires an event. |
-| `pinch` | GRAB | At the current spot: descend to hover, slowly onto the block, suction on, lift back up. Mirroring continues without re-centring. |
+| `pinch` | GRAB | At the current spot: descend to hover, slowly onto the block, suction on, lift back up. The arm stops following while the pinch charges, so it lands where you pointed. Refused (grey toast says why) until your finger is re-centred and the arm is inside the steering box. Mirroring continues without re-centring afterwards. |
 | `open-palm` | RELEASE / PLACE / RESUME | Holding something: descend, release just above the block, lift back up. Otherwise a plain release. From FROZEN: the only way out (plain release). |
 | `fist` | FREEZE | Dead-man switch. Halts where it is, ignores everything except `open-palm`. Aborts any routine. |
 | `thumbs-up` | HOME | Goes to the home pose. Mirroring resumes once your finger is back in the centre of the frame. |
@@ -90,7 +90,8 @@ default because it is the noisiest axis.
   floor rises to the travel height (160 mm) so the carried block clears the blocks still on the table, and
   a second pinch is ignored until you place.
 - A fist mid-GRAB or mid-carry keeps the pump on; the following `open-palm` vents where the arm stopped
-  (logged as a warning). Quitting while FROZEN vents and leaves the arm where it halted.
+  (logged as a warning). Every freeze requires a re-centre before the arm follows again. Quitting while
+  FROZEN vents and leaves the arm where it halted.
 - The first live run of a session asks `Workspace clear? [y/N]` before anything moves. `--dry-run` never
   opens the serial port. Do not leave it running unattended.
 - Every accepted/rejected prediction (class, confidence, debounce count), every event, every mode transition

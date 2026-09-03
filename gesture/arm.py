@@ -132,11 +132,19 @@ class GestureArm(_Base):
                                     "(blind target could jerk the arm); motion stays inhibited, the in-flight "
                                     "move ends on its own")
                 return
-            # read-back is ~8 mm noisy; clamp into the reach box so the driver's check never refuses a stop
-            x, y, z = clamp_box(pos, reach_box())
-            z = max(z, float(_bp.config.require("TABLE_Z_MM")))
-            self.glog.info("arm: HALT at read-back %s -> command (%.0f, %.0f, %.0f) %d ms; motion inhibited",
-                           pos, x, y, z, config.HALT_MOVE_MS)
+            tol = _bp.arm.POSITION_TOLERANCE_MM
+            if (self.commanded is not None and max(abs(pos[i] - self.commanded[i]) for i in range(3)) <= tol):
+                # at rest at the last verified target (e.g. the cup pressed on a block after a GRAB descent):
+                # re-send that target, never a noisy read-back that could push the cup further down
+                x, y, z = self.commanded
+                self.glog.info("arm: HALT at rest (read-back %s within %.0f mm of commanded) -> re-command "
+                               "(%.0f, %.0f, %.0f) %d ms; motion inhibited", pos, tol, x, y, z, config.HALT_MOVE_MS)
+            else:
+                # read-back is ~8 mm noisy; clamp into the reach box so the driver's check never refuses a stop
+                x, y, z = clamp_box(pos, reach_box())
+                z = max(z, float(_bp.config.require("TABLE_Z_MM")))
+                self.glog.info("arm: HALT at read-back %s -> command (%.0f, %.0f, %.0f) %d ms; motion inhibited",
+                               pos, x, y, z, config.HALT_MOVE_MS)
             if self.dry_run:
                 self.commanded = (x, y, z)
                 return
@@ -151,6 +159,8 @@ class GestureArm(_Base):
 
     # -- suction state tracking (the block picker's PickLoop calls suction()/vent() directly) ------
     def suction(self, on: bool) -> None:
+        if not on:
+            self.gripping = False       # the pump-off frame is the first byte out; the vent only lets go
         super().suction(on)
         self.gripping = bool(on)
 

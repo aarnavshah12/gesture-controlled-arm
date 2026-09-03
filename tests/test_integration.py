@@ -157,13 +157,14 @@ class IntegrationTest(unittest.TestCase):
         self.assertEqual(sm.mode, ROUTINE)
         self.assertEqual(sm.routine, "PLACE")
         self.assertTrue(self.wait_until(lambda: sm.mode == MIRROR))
-        self.assertEqual(a.kinds().count("release"), 1)
+        self.assertIn(("suction", False), [e[:2] for e in a.log])   # the set-down vents via the driver
+        self.assertEqual(a.kinds().count("release"), 0)
         self.assertFalse(a.gripping)
         self.assertFalse(ctl.recenter_required)
         self.assertTrue(self.wait_until(lambda: ctl.box[2][0] == BOX[2][0]))  # floor back to normal
         # open-palm with nothing held is a plain release
         self.hold("open-palm")
-        self.assertTrue(self.wait_until(lambda: a.kinds().count("release") == 2))
+        self.assertTrue(self.wait_until(lambda: a.kinds().count("release") == 1))
         self.assertEqual(sm.mode, MIRROR)
         # 3. home routine -> back to MIRROR with re-centre required
         self.hold("thumbs-up")
@@ -192,7 +193,7 @@ class IntegrationTest(unittest.TestCase):
         self.assertEqual(sm.mode, FROZEN)              # ignored while frozen: no GRAB routine
         self.hold("open-palm")
         self.assertTrue(self.wait_until(lambda: sm.mode == MIRROR and ctl.enabled))
-        self.assertEqual(a.kinds().count("release"), 3)
+        self.assertEqual(a.kinds().count("release"), 2)
         # the resume is queued AFTER the release in the ops queue
         idx_rel = max(i for i, e in enumerate(a.log) if e[0] == "release")
         self.assertTrue(ctl.recenter_required)
@@ -239,6 +240,20 @@ class IntegrationTest(unittest.TestCase):
         self.assertEqual(a.kinds().count("move"), moves_before)   # no rise was sent
         self.assertTrue(a.inhibited)                # halt still in force
         self.assertFalse(ctl.enabled)
+
+    def test_grab_refused_before_recentre_and_not_at_home(self):
+        a, sm = self.arm, self.sm
+        self.hold("pinch")                          # never centred: no reference yet
+        self.assertEqual(sm.mode, MIRROR)
+        self.assertNotIn("move", a.kinds())
+        self.assertEqual(sm.last_refusal, "re-centre your finger first")
+        self.centre_hand()
+        self.hold("thumbs-up")                      # HOME parks outside the box
+        self.assertTrue(self.wait_until(lambda: sm.mode == MIRROR))
+        moves = a.kinds().count("move")
+        self.hold("pinch")                          # re-centre pending again after HOME
+        self.assertEqual(a.kinds().count("move"), moves)
+        self.assertEqual(sm.mode, MIRROR)
 
     def test_flicker_moves_nothing(self):
         self.centre_hand()

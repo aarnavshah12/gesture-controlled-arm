@@ -27,7 +27,7 @@ import cv2
 from gesture import bp, config, runlog, viz
 from gesture.camera import Camera
 from gesture.gestures import Actions, Debouncer, StateMachine, FROZEN, MIRROR, ROUTINE, reconcile
-from gesture.motion import MotionController
+from gesture.motion import MotionController, clamp_target
 from gesture.perception import DetectionResult, DetectorWorker, GestureDetector, HandTracker
 
 TOAST = {
@@ -73,6 +73,21 @@ class NullArm:
         self.log.info("[dry-run] arm: home")
         self.move_to(*(config.MIRROR_ORIGIN_XYZ_MM), ms)
 
+    def wait(self, seconds):
+        end = time.time() + max(0.0, seconds)
+        while time.time() < end:
+            if self.tick:
+                self.tick()
+            time.sleep(0.05)
+
+    def suction(self, on):
+        self.gripping = bool(on)
+        self.log.info("[dry-run] arm: suction(%s)", on)
+
+    def vent(self):
+        self.gripping = False
+        self.log.info("[dry-run] arm: vent")
+
     def halt(self):
         self.inhibited = True
         self.log.info("[dry-run] arm: HALT at %s", self.commanded)
@@ -81,10 +96,10 @@ class NullArm:
         self.inhibited = False
 
     def grip(self):
-        self.log.info("[dry-run] arm: GRIP")
+        self.suction(True)
 
     def release(self):
-        self.log.info("[dry-run] arm: RELEASE")
+        self.suction(False)
 
     def read_xyz(self):
         return None
@@ -149,6 +164,22 @@ class AppActions(Actions):
     def is_gripping(self) -> bool:
         return bool(getattr(self.arm, "gripping", False))
 
+    def can_grab(self) -> tuple[bool, str]:
+        """GRAB/PLACE only where steering put the arm: position known, finger re-centred, inside the box."""
+        snap = self.controller.snapshot()
+        if not snap["position_known"]:
+            return False, "arm position unknown"
+        if snap["recenter"]:
+            return False, "re-centre your finger first"
+        pos = snap["commanded"]
+        if pos is None or self.box is None:
+            return False, "arm position unknown"
+        (xlo, xhi), (ylo, yhi), _ = self.box
+        m = 12.0   # read-back / streaming slack
+        if not (xlo - m <= pos[0] <= xhi + m and ylo - m <= pos[1] <= yhi + m):
+            return False, "arm outside the steering box"
+        return True, ""
+
     def resume_mirror(self, recenter: bool) -> None:
         epoch = self.controller.epoch
 
@@ -171,8 +202,10 @@ class AppActions(Actions):
                 # halt it sent must stay in force. Check + release are atomic against halt().
                 if not self.controller.release_halt_if_current(epoch):
                     return
+                # same envelope as steering: (x, y) pulled inward if the floor height needs too much stretch
+                rx, ry, rz = clamp_target((x, y, zf), self.controller.box, self.controller.origin)
                 try:
-                    self.arm.move_to(x, y, zf, 800)     # refused (ArmError) if a fist lands meanwhile
+                    self.arm.move_to(rx, ry, rz, 800)   # refused (ArmError) if a fist lands meanwhile
                 except Exception as e:  # noqa: BLE001
                     self.log.error("resume-mirror: rise refused (%r); mirroring stays disabled - thumbs-up HOME", e)
                     return
@@ -260,7 +293,7 @@ def main(argv=None) -> int:
     controller = MotionController(arm, box, check=check)
     controller.sync_to_arm()
     controller.start()
-    routines = Routines(arm, dry_run=args.dry_run, mac_camera_index=cam.index)
+    routines = Routines(arm, dry_run=args.dry_run, mac_camera_index=cam.index, box=box)
     toasts = viz.Toasts()
     ops = ArmOps(log)
     actions = AppActions(arm, controller, routines, toasts, ops, log, box=box)
@@ -321,7 +354,8 @@ def main(argv=None) -> int:
                 a = config.WRIST_SMOOTHING
                 ema = w if ema is None else (ema[0] + a * (w[0] - ema[0]), ema[1] + a * (w[1] - ema[1]))
                 trail.append((ema[0] * frame.shape[1], ema[1] * frame.shape[0]))
-                size = float(((hand.norm[0] - hand.norm[9]) ** 2).sum() ** 0.5) if config.MIRROR_DEPTH else None
+                # palm size in PIXELS (normalised units are anisotropic: a tilted palm would read as depth)
+                size = (float(((hand.pts[0] - hand.pts[9]) ** 2).sum() ** 0.5) / frame.shape[1]) if config.MIRROR_DEPTH else None
                 controller.update_hand(ema, t, size)
             else:
                 missing += 1
@@ -333,6 +367,7 @@ def main(argv=None) -> int:
                 controller.update_hand(None, t)
 
             # command channel: gesture model every Nth frame in the worker -> debounce -> events
+            actions.drain()   # routine completions first, so a gesture right after one is not "ignored (routine)"
             worker.submit(frame, i, t)
             res = worker.poll()
             if res is not None:
@@ -352,7 +387,9 @@ def main(argv=None) -> int:
                     if sm.on_event(ev):
                         toasts.add(text, colour, t)
                     elif ev.name != "FREEZE":
-                        toasts.add(f"{text} ignored ({mode_before.lower()})", viz.GREY, t)
+                        toasts.add(f"{text} ignored ({sm.last_refusal or mode_before.lower()})", viz.GREY, t)
+                # a charging command gesture holds the target (a forming pinch moves the fingertip)
+                controller.set_charging(deb.cls in config.GESTURE_EVENTS and deb.count >= 1 and not deb.fired)
             actions.drain()   # routine completions, delivered on this thread
 
             # overlay
