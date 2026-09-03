@@ -24,6 +24,8 @@ from .gestures import Prediction
 
 WRIST = 0
 FINGERTIPS = (4, 8, 12, 16, 20)
+# (tip, PIP) landmark pairs for the four fingers; the thumb is not needed for point-vs-peace
+FINGERS = {"index": (8, 6), "middle": (12, 10), "ring": (16, 14), "pinky": (20, 18)}
 # Hand skeleton edges (MediaPipe HandLandmarksConnections.HAND_CONNECTIONS, 21 edges, verified
 # against mediapipe 0.10.21 at start-up in HandTracker).
 HAND_CONNECTIONS = (
@@ -51,6 +53,28 @@ class Hand:
     @property
     def wrist_norm(self) -> tuple[float, float]:
         return float(self.norm[WRIST, 0]), float(self.norm[WRIST, 1])
+
+
+def finger_states(norm: np.ndarray, ratio: float | None = None) -> dict[str, bool]:
+    """Which of index / middle / ring / pinky are extended, from the 21 normalised landmarks.
+
+    A finger is extended when its tip is farther from the wrist than its PIP joint (by `ratio`); a
+    curled finger brings the tip back toward the palm. Rotation-invariant, good enough to tell one
+    raised finger from two, which is all it is used for.
+    """
+    ratio = config.FINGER_EXTENDED_RATIO if ratio is None else ratio
+    w = norm[WRIST]
+    out = {}
+    for name, (tip, pip) in FINGERS.items():
+        d_tip = float(np.hypot(*(norm[tip] - w)))
+        d_pip = float(np.hypot(*(norm[pip] - w)))
+        out[name] = d_tip > d_pip * ratio
+    return out
+
+
+def two_fingers_up(states: dict[str, bool]) -> bool:
+    """The peace sign: index + middle extended, ring + pinky folded."""
+    return states["index"] and states["middle"] and not states["ring"] and not states["pinky"]
 
 
 class HandTracker:

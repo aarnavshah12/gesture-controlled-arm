@@ -33,10 +33,33 @@ class Prediction:
     y1: int
     x2: int
     y2: int
+    raw_cls: str | None = None   # the model's label when `cls` was corrected by the landmark veto
 
     @property
     def box(self) -> tuple[int, int, int, int]:
         return self.x1, self.y1, self.x2, self.y2
+
+    @property
+    def corrected(self) -> bool:
+        return self.raw_cls is not None and self.raw_cls != self.cls
+
+
+def reconcile(pred: Prediction | None, hand, log=None) -> Prediction | None:
+    """Apply config.LANDMARK_VETO: relabel a model class the landmarks contradict. One direction only."""
+    if pred is None or hand is None or pred.cls not in config.LANDMARK_VETO:
+        return pred
+    from .perception import finger_states, two_fingers_up   # local import: gestures stays hardware-free
+
+    states = finger_states(hand.norm)
+    if pred.cls == "peace" and two_fingers_up(states):
+        return pred
+    if pred.cls == "peace":
+        new_cls = config.LANDMARK_VETO["peace"]
+        (log or runlog.get_logger()).info(
+            "landmark veto: model %s %.2f but fingers %s -> %s", pred.cls, pred.conf,
+            "".join(k[0].upper() if v else k[0] for k, v in states.items()), new_cls)
+        return Prediction(new_cls, pred.conf, pred.x1, pred.y1, pred.x2, pred.y2, raw_cls=pred.cls)
+    return pred
 
 
 @dataclass(frozen=True)

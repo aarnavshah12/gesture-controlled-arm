@@ -37,6 +37,13 @@ GESTURE_EVENTS = {
     "peace": "FLOURISH",
 }
 NO_EVENT_CLASSES = ("point",)   # recognised and drawn, never an event, resets the debounce
+# Owner decision 2026-09-03 (a deliberate exception to "no gesture rules from landmarks"): the model
+# confuses one raised finger with two, which would fire FLOURISH while steering. A `peace` prediction is
+# accepted only if MediaPipe sees index + middle extended and ring + pinky folded; otherwise it is
+# relabelled `point`. Landmarks can VETO a model label, never create an event.
+LANDMARK_VETO = {"peace": "point"}
+FINGER_EXTENDED_RATIO = 1.15    # tip farther from the wrist than the PIP joint by this factor = extended
+VETO_MAX_HAND_AGE_S = 0.3       # landmarks older than this are not used to judge a prediction
 CONFIDENCE = 0.7      # a prediction below this is rejected (logged) and resets the debounce
 DEBOUNCE_N = 5        # consecutive accepted predictions of the same class before the event fires
 DETECT_EVERY_N = 2    # run the gesture model on every Nth camera frame (in a worker thread)

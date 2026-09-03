@@ -26,9 +26,9 @@ import cv2
 
 from gesture import bp, config, runlog, viz
 from gesture.camera import Camera
-from gesture.gestures import Actions, Debouncer, StateMachine, FROZEN, MIRROR, ROUTINE
+from gesture.gestures import Actions, Debouncer, StateMachine, FROZEN, MIRROR, ROUTINE, reconcile
 from gesture.motion import MotionController
-from gesture.perception import DetectorWorker, GestureDetector, HandTracker
+from gesture.perception import DetectionResult, DetectorWorker, GestureDetector, HandTracker
 
 TOAST = {
     "FREEZE": ("FROZEN", config.GESTURE_COLOURS["fist"]),
@@ -289,6 +289,8 @@ def main(argv=None) -> int:
     ema = None
     fps, t_prev = 0.0, time.time()
     last_res = None
+    last_hand = None
+    last_hand_t = 0.0
     img = None
     i = 0
     bad_reads = 0
@@ -313,6 +315,7 @@ def main(argv=None) -> int:
             # continuous stream: landmarks every frame -> smoothed wrist -> controller
             hand = tracker.process(frame, t)
             if hand is not None:
+                last_hand, last_hand_t = hand, t
                 missing = 0
                 w = tuple(float(v) for v in hand.norm[config.TRACK_LANDMARK])   # index fingertip by default
                 a = config.WRIST_SMOOTHING
@@ -333,6 +336,10 @@ def main(argv=None) -> int:
             worker.submit(frame, i, t)
             res = worker.poll()
             if res is not None:
+                judge = last_hand if (last_hand is not None and t - last_hand_t <= config.VETO_MAX_HAND_AGE_S) else None
+                top = reconcile(res.top, judge, log)
+                if top is not res.top:
+                    res = DetectionResult(res.frame_id, top, res.preds, res.ms, res.t)
                 last_res = res
                 ev = deb.update(res.top, t)
                 if ev is not None:

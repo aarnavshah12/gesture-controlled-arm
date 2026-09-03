@@ -254,7 +254,8 @@ def render(frame, *, hand=None, connections=(), pred=None, progress: float = 0.0
         draw_trail(img, trail)
     if pred is not None:
         colour = gesture_colour(pred.cls)
-        draw_bbox(img, pred.box, f"{pred.cls} {pred.conf:.2f}", colour, progress)
+        label = f"{pred.cls} {pred.conf:.2f}" + (" (lm)" if getattr(pred, "corrected", False) else "")
+        draw_bbox(img, pred.box, label, colour, progress)
     if hand is not None:
         draw_skeleton(img, hand.pts, connections, track=config.TRACK_LANDMARK)
     draw_banner(img, mode, mode_sub)
