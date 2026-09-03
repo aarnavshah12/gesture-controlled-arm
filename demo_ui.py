@@ -221,7 +221,8 @@ def timeline(img, x, y, w, h, rep: Replay, t_clip, duration, offset):
         cv2.circle(img, (px, ty), 7, colour, -1, cv2.LINE_AA)
         label = EVENT_NAME.get(name, name)
         lw, lh = _text_w(label, 0.5, 1)
-        _text(img, label, (px - lw // 2, ty - 16), 0.5, colour, 1)
+        lx = min(max(px - lw // 2, x), x + w - lw)      # keep the label inside the track
+        _text(img, label, (lx, ty - 16), 0.5, colour, 1)
     px = int(x + w * min(max(t_clip, 0), duration) / duration)
     cv2.line(img, (px, ty - 30), (px, ty + 30), WHITE, 2, cv2.LINE_AA)
 
