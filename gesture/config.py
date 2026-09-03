@@ -79,7 +79,7 @@ HAND_MIN_PRESENCE_CONF = 0.5
 HAND_MIN_TRACKING_CONF = 0.5
 # The landmark that drives the arm: 8 = index fingertip (owner decision 2026-09-03; 0 = wrist).
 TRACK_LANDMARK = 8
-WRIST_SMOOTHING = 0.35    # EMA weight of the newest tracked-point sample (1.0 = raw, 0.1 = very smooth)
+WRIST_SMOOTHING = 0.45    # EMA weight of the newest tracked-point sample (1.0 = raw, 0.1 = very smooth)
 WRIST_TRAIL_LEN = 20      # smoothed tracked-point positions kept for the on-screen trail
 NO_HAND_HOLD_S = 1.0      # no hand for this long in MIRROR = hold position
 
@@ -92,7 +92,9 @@ BLOCK_PICKER_DIR = os.path.expanduser("~/Documents/Defect-detect bot")
 # Mirroring box. Taken from the block picker's calibrated pick area (x -115..145, y -250..-100, the
 # region the arm has demonstrably reached) and heights between pick hover (122) and travel (160)
 # with margin. Always intersected with the block picker's REACH_* at start-up; never wider.
-MIRROR_X_MM = (-115.0, 145.0)
+# Owner 2026-09-03: "make it go further and faster". x widened to the arm's real sweep (still inside the
+# block picker's reach limits, the base keep-out and the extension guard); gains and the velocity cap raised.
+MIRROR_X_MM = (-200.0, 200.0)
 MIRROR_Y_MM = (-250.0, -130.0)   # near edge kept outside the block picker's 120 mm base keep-out radius
 MIRROR_Z_MM = (115.0, 200.0)     # floor clears a 40 mm block on the table (top at 87) by 28 mm: ~8 mm read-back noise + height drift near the base
 # Where the cup sits when the hand is at its reference point: centre of the box, at a height the
@@ -101,8 +103,8 @@ MIRROR_ORIGIN_XYZ_MM = (0.0, -175.0, 150.0)
 # Hand -> arm mapping. Wrist position is normalised to the frame (0..1). A full frame width of hand
 # travel = MIRROR_GAIN_X_MM of arm travel; full frame height = MIRROR_GAIN_Z_MM. Screen y grows
 # downwards, arm z grows upwards, hence the -1. Targets are clamped to the box regardless.
-MIRROR_GAIN_X_MM = 320.0
-MIRROR_GAIN_Z_MM = 220.0
+MIRROR_GAIN_X_MM = 520.0   # a finger sweep across ~3/4 of the frame covers the whole 400 mm box
+MIRROR_GAIN_Z_MM = 300.0
 MIRROR_X_SIGN = +1.0
 MIRROR_Z_SIGN = -1.0
 # Depth (arm y, toward/away from the front of the arm) from the apparent palm size: a hand closer to
@@ -118,9 +120,9 @@ RECENTER_HOLD_S = 0.4      # hold the fingertip inside the zone this long; the r
 RECENTER_LOSS_GRACE_S = 0.3  # a hand lost for less than this does not restart the hold
 PINCH_FORM_S = 0.4         # rewind the target this far when a command gesture starts charging (the fingertip
                            # curls toward the thumb before the model can see a pinch)
-CONTROL_HZ = 10.0
-VELOCITY_CAP_MM_S = 150.0  # commanded target may move at most this fast (per control tick)
-STREAM_MOVE_MS = 150       # duration sent with each streamed target (a little over one tick)
+CONTROL_HZ = 15.0          # 9600 baud carries a 13-byte frame in ~14 ms: 15 Hz leaves the line mostly idle
+VELOCITY_CAP_MM_S = 300.0  # commanded target may move at most this fast (per control tick: 20 mm at 15 Hz)
+STREAM_MOVE_MS = 120       # duration sent with each streamed target (a little over one tick)
 EXTENSION_MAX = 0.88       # targets needing more of the arm's full stretch are pulled back (IK refuses ~0.9+)
 READBACK_EVERY_S = 2.0     # how often the control loop reads the real position for the status strip
 HALT_MOVE_MS = 300         # duration of the "stop where you are" command on FREEZE / abort
@@ -133,6 +135,7 @@ GRAB_Z_MM: float | None = None
 GRAB_HOVER_MM: float | None = None      # None = block picker HOVER_OFFSET_MM (40)
 PLACE_LIFT_MM: float | None = None      # release this far above the pick height (block picker RELEASE_LIFT_MM, 20)
 GRAB_SUCTION_PAUSE_S = 1.0              # let the vacuum build before lifting
+PLACE_VENT_S = 1.0                      # valve open this long before lifting; the valve closes only once the cup is clear
 # While holding a block the mirror box floor rises to this height so the carried block (bottom = z - 40)
 # clears blocks still on the table (tops at 87). None = block picker TRAVEL_Z_MM (160).
 CARRY_Z_FLOOR_MM: float | None = None

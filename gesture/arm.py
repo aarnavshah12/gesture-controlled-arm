@@ -66,6 +66,31 @@ class GestureArm(_Base):
                 self.glog.info("arm: motion re-enabled")
             self.inhibited = False
 
+    # -- connection ------------------------------------------------------------------------
+    def connect(self):
+        """The driver's connect(), with the macOS "stuck USB-serial driver" failure explained.
+
+        termios EINVAL on open means the OS driver for the arm's USB-serial chip refuses every settings
+        change (seen 2026-09-03 after an unclean disconnect). Nothing in software fixes it: the cable must
+        be unplugged and plugged back in (or the Mac rebooted).
+        """
+        import termios
+
+        try:
+            return super().connect()
+        except termios.error as e:
+            raise ArmError(
+                f"cannot configure the arm's serial port ({e}): the macOS USB-serial driver is stuck. "
+                f"Unplug the arm's USB cable from the Mac, plug it back in, and run again. (If the pump is "
+                f"running, switch the arm off and on: it boots with the pump off.)") from e
+
+    def ensure_pump_off(self) -> None:
+        """Session start: a previous process that died mid-grab leaves the pump running; vent once."""
+        if self.dry_run:
+            return
+        self.glog.info("arm: session start -> pump off, vent, valve close")
+        self.suction(False)
+
     # -- serial access serialised across threads ------------------------------------
     def _send(self, frame: bytes) -> None:
         with self.lock:

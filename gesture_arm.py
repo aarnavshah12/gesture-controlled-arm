@@ -88,6 +88,9 @@ class NullArm:
         self.gripping = False
         self.log.info("[dry-run] arm: vent")
 
+    def valve_close(self):
+        self.log.info("[dry-run] arm: valve close")
+
     def halt(self):
         self.inhibited = True
         self.log.info("[dry-run] arm: HALT at %s", self.commanded)
@@ -282,9 +285,14 @@ def main(argv=None) -> int:
             raise SystemExit(f"cannot run live without the block-picker project: {e}")
         log.warning("%s", e)
         arm = NullArm(log)
-    arm.connect()
+    try:
+        arm.connect()
+    except Exception as e:  # noqa: BLE001 - a clear one-line message instead of a stack trace
+        log.error("%s", e)
+        raise SystemExit(f"\n*** {e}\n") from e
     if not args.dry_run:
         arm.confirm_workspace_clear()   # once per session, before anything can move
+        arm.ensure_pump_off()           # a crashed earlier session may have left the pump on
     log.info("mirror box x%s y%s z%s origin=%s gains x=%.0f z=%.0f mm/frame cap=%.0f mm/s @ %.0f Hz",
              *box, config.MIRROR_ORIGIN_XYZ_MM, config.MIRROR_GAIN_X_MM, config.MIRROR_GAIN_Z_MM,
              config.VELOCITY_CAP_MM_S, config.CONTROL_HZ)

@@ -74,6 +74,13 @@ class FakeArm:
         self._rec("release")
         self.gripping = False
 
+    def vent(self):
+        self._rec("vent")
+        self.gripping = False
+
+    def valve_close(self):
+        self._rec("valve_close")
+
     def read_xyz(self):
         return None
 
@@ -157,7 +164,8 @@ class IntegrationTest(unittest.TestCase):
         self.assertEqual(sm.mode, ROUTINE)
         self.assertEqual(sm.routine, "PLACE")
         self.assertTrue(self.wait_until(lambda: sm.mode == MIRROR))
-        self.assertIn(("suction", False), [e[:2] for e in a.log])   # the set-down vents via the driver
+        self.assertIn("vent", a.kinds())                              # the set-down vents, lifts, then closes
+        self.assertIn("valve_close", a.kinds())
         self.assertEqual(a.kinds().count("release"), 0)
         self.assertFalse(a.gripping)
         self.assertFalse(ctl.recenter_required)

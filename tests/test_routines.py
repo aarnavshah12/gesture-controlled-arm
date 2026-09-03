@@ -29,6 +29,13 @@ class FakeArm:
         self.events.append(("release",))
         self.gripping = False
 
+    def vent(self):
+        self.events.append(("vent",))
+        self.gripping = False
+
+    def valve_close(self):
+        self.events.append(("valve_close",))
+
     def wait(self, seconds):
         end = time.time() + min(seconds, 0.02)
         while time.time() < end:
@@ -148,7 +155,9 @@ class RoutinesTest(unittest.TestCase):
         r = Routines(arm, dry_run=True, log=silent_logger())
         self.assertTrue(self.run_routine(r, "PLACE"))
         self.assertEqual([m[2] for m in arm.moves], [124.0, 104.0, 124.0, 160.0])
-        self.assertEqual(arm.events[2], ("suction", False))
+        kinds = [e[0] for e in arm.events]
+        # vent at 104, lift to hover with the valve still open, close it, then up
+        self.assertEqual(kinds, ["move", "move", "vent", "move", "valve_close", "move"])
         self.assertFalse(arm.gripping)
 
     def test_grab_aborts_mid_descent(self):

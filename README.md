@@ -79,12 +79,17 @@ default because it is the noisiest axis.
    mid-routine.
 6. **Filming** - `--clean`, see `DEMO.md`.
 
+## If the arm will not connect
+
+`cannot configure the arm's serial port ... the macOS USB-serial driver is stuck`: unplug the arm's USB cable
+from the Mac and plug it back in (a reboot also works). If the pump is running, switch the arm off and on.
+
 ## Safety
 
 - Every commanded target is clamped to the mirror box, which is itself inside the block picker's measured
   reach limits and above table Z; targets that would need more than 88 % of the arm's stretch are pulled
   back (the firmware silently ignores those). The driver checks again before any byte is sent.
-- The commanded point moves at most 150 mm/s; the control loop runs at a fixed 10 Hz regardless of camera FPS.
+- The commanded point moves at most 300 mm/s; the control loop runs at a fixed 15 Hz regardless of camera FPS.
 - `fist` halts the arm at its read-back position within one control tick, aborts routines and inhibits every
   further move frame at the serial layer until `open-palm` resumes. No hand for 1 s = hold. If the arm's
   position cannot be read, mirroring stays disabled (the strip says so) until thumbs-up HOME re-syncs.

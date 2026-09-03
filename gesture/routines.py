@@ -202,9 +202,13 @@ class Routines:
         self.status = "descending"
         self._descend(x, y, pick_z + hover, pick_z + lift, "PLACE")
         self.status = "releasing"
-        self.arm.suction(False)                  # vent, wait, valve close: the intended set-down, 20 mm up
+        # Block-picker sequence (pick.py): pump off + valve OPEN, wait, lift clear, THEN close the valve.
+        # Closing it while the bellows cup is still on the block re-grabs it like a sucker (seen 2026-09-03).
+        self.arm.vent()
+        self.arm.wait(config.PLACE_VENT_S)
         self.status = "lifting"
         self.arm.move_to(x, y, pick_z + hover)
+        self.arm.valve_close()
         self.arm.move_to(x, y, z_top)
 
     def _home(self) -> None:
