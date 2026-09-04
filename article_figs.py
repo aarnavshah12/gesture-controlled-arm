@@ -139,25 +139,45 @@ def finger_panel(ax, img_bgr, title):
 
 
 def fig_veto(cap, log, offset, samples, out):
-    """(a) a real frame where the model said peace and the landmarks relabelled it; (b) the test on a real
-    peace hand; (c) on a real pointing hand."""
-    veto_t = [t for t, l in log if "landmark veto" in l]
-    t_clip = veto_t[-1] - offset + 0.15          # the peace 0.91 -> point case near the end of the take
-    fr = frame_at(cap, t_clip)
-    # crop around the hand: find the strongest coloured label pill row in the left 3/4 of the frame
+    """One live moment, three panels: what RF-DETR said (quoted from the log), what the landmarks said
+    (from the same log line), and the label the app actually showed and used."""
+    vet = [(t, l) for t, l in log if "landmark veto" in l]
+    t_v, line = max(vet, key=lambda tl: float(re.search(r"model peace ([\d.]+)", tl[1]).group(1)))
+    conf = re.search(r"model peace ([\d.]+)", line).group(1)
+    code = re.search(r"fingers (\S+)", line).group(1)
+    names = ["index", "middle", "ring", "pinky"]
+    states = ", ".join(f"{n} {'up' if c.isupper() else 'down'}" for n, c in zip(names, code))
+    fr = frame_at(cap, t_v - offset + 0.15)
     H, W = fr.shape[:2]
-    crop = fr[int(H * 0.16):int(H * 0.98), int(W * 0.28):int(W * 0.74)]
-    fig = plt.figure(figsize=(14, 5.4))
-    gs = fig.add_gridspec(1, 3, width_ratios=[1.15, 1, 1], wspace=0.08)
-    ax = fig.add_subplot(gs[0]); ax.imshow(rgb(crop)); ax.axis("off")
-    ax.set_title("Live: model says peace 0.91, landmarks say one finger.\nLabel becomes point (lm); no handshake fires.", fontsize=10)
-    peace = cv2.imread(sorted(glob.glob(os.path.join(samples, "1[3-5]-peace.jpg")))[1])
-    point = cv2.imread(sorted(glob.glob(os.path.join(samples, "1[0-2]-point.jpg")))[0])
-    finger_panel(fig.add_subplot(gs[1]), cv2.resize(peace, (1280, 854)), "Dataset frame labelled peace")
-    finger_panel(fig.add_subplot(gs[2]), cv2.resize(point, (1280, 854)), "Dataset frame labelled point")
-    fig.text(0.5, 0.005, "Test: a finger is extended when its tip (green/red) is farther from the wrist than its middle joint (yellow) x 1.15. "
-             f"Landmarks can veto a label, never fire an event. {len([1 for t, l in log if 'landmark veto' in l])} vetoes in this take alone.",
-             ha="center", fontsize=9, color=GREY)
+    x0, x1 = int(W * 0.28), int(W * 0.74)
+    full = fr[int(H * 0.16):int(H * 0.98), x0:x1]          # includes the app's own label pill
+    below = fr[int(H * 0.275):int(H * 0.98), x0:x1]        # label pill cropped away
+    pink, purple = RGB["peace"], RGB["point"]
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5.6))
+    for ax in axes:
+        ax.axis("off")
+    axes[0].imshow(rgb(below))
+    axes[0].set_title("1. What RF-DETR said", fontsize=12)
+    axes[0].text(0.03, 0.96, f"peace  {conf}", transform=axes[0].transAxes, va="top", fontsize=15, fontweight="bold", color="white",
+                 bbox=dict(facecolor=pink, edgecolor="none", pad=8))
+    axes[0].text(0.03, 0.80, "top-1 class at this instant\n(quoted from the session log)", transform=axes[0].transAxes, va="top",
+                 fontsize=9, color=INK, bbox=dict(facecolor="white", alpha=0.85, edgecolor="none", pad=5))
+    axes[1].imshow(rgb(below))
+    axes[1].set_title("2. What the landmarks said", fontsize=12)
+    axes[1].text(0.03, 0.96, "not two fingers up", transform=axes[1].transAxes, va="top", fontsize=15, fontweight="bold", color="white",
+                 bbox=dict(facecolor=INK, edgecolor="none", pad=8))
+    axes[1].text(0.03, 0.80, f"{states}\n(same log line: peace needs index + middle up,\nring + pinky down)", transform=axes[1].transAxes,
+                 va="top", fontsize=9, color=INK, bbox=dict(facecolor="white", alpha=0.85, edgecolor="none", pad=5))
+    axes[2].imshow(rgb(full))
+    axes[2].set_title("3. What the app showed and used", fontsize=12)
+    axes[2].text(0.03, 0.04, f"point  {conf}  (lm)", transform=axes[2].transAxes, va="bottom", fontsize=15, fontweight="bold", color="white",
+                 bbox=dict(facecolor=purple, edgecolor="none", pad=8))
+    axes[2].text(0.03, 0.20, "the label on screen (top of the box): peace vetoed -> point,\nthe steering pose. No handshake fires. (lm) marks the correction.",
+                 transform=axes[2].transAxes, va="bottom", fontsize=9, color=INK, bbox=dict(facecolor="white", alpha=0.85, edgecolor="none", pad=5))
+    fig.text(0.5, 0.01, f"Log line: {line.replace('INFO gesture ', '').strip()}     Landmarks can veto a label, never fire an event. "
+             f"{len(vet)} vetoes in this take, 459 across the day. On clean validation frames the model also hedges: a pointing hand "
+             f"gets both a point 0.63 and a peace 0.37 box.", ha="center", fontsize=8.5, color=GREY, wrap=True)
+    fig.subplots_adjust(wspace=0.04, bottom=0.1)
     fig.savefig(out, bbox_inches="tight", facecolor="white"); plt.close(fig)
 
 
