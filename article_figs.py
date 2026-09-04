@@ -133,7 +133,7 @@ def finger_panel(ax, img_bgr, title):
         ax.scatter([pts[tip, 0]], [pts[tip, 1]], color=col, s=60, zorder=5, edgecolor="white")
     verdict = "two fingers up: peace stands" if two_fingers_up(st) else "not two fingers: peace -> point"
     code = "  ".join(f"{k} {'up' if v else 'down'}" for k, v in st.items())
-    ax.set_title(f"{title}\n{verdict}", fontsize=11)
+    ax.set_title(f"{title}\n{verdict}", fontsize=10)
     ax.text(0.02, 0.03, code, transform=ax.transAxes, fontsize=8.5, color="white",
             bbox=dict(facecolor=INK, alpha=0.75, edgecolor="none", pad=4))
 
@@ -150,7 +150,7 @@ def fig_veto(cap, log, offset, samples, out):
     fig = plt.figure(figsize=(14, 5.4))
     gs = fig.add_gridspec(1, 3, width_ratios=[1.15, 1, 1], wspace=0.08)
     ax = fig.add_subplot(gs[0]); ax.imshow(rgb(crop)); ax.axis("off")
-    ax.set_title("Live: the model said peace 0.91, the landmarks said one finger.\nLabel becomes point (lm), no handshake fires.", fontsize=11)
+    ax.set_title("Live: model says peace 0.91, landmarks say one finger.\nLabel becomes point (lm); no handshake fires.", fontsize=10)
     peace = cv2.imread(sorted(glob.glob(os.path.join(samples, "1[3-5]-peace.jpg")))[1])
     point = cv2.imread(sorted(glob.glob(os.path.join(samples, "1[0-2]-point.jpg")))[0])
     finger_panel(fig.add_subplot(gs[1]), cv2.resize(peace, (1280, 854)), "Dataset frame labelled peace")
@@ -198,7 +198,7 @@ def fig_steering(cap, log, offset, out):
         m = re.search(r"stream_to\(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", l)
         if m:
             xs.append(float(m.group(1))); zs.append(float(m.group(3)))
-    ax2.plot(xs, zs, color=ACCENT, lw=1.5, alpha=0.9, label=f"{len(xs)} streamed targets, this session")
+    ax2.plot(xs, zs, color=ACCENT, lw=1.5, alpha=0.9)
     ax2.scatter(xs[0], zs[0], color=ACCENT, s=40, zorder=4); ax2.text(xs[0] + 6, zs[0] + 3, "start", fontsize=8, color=ACCENT)
     ox, oy, oz = config.MIRROR_ORIGIN_XYZ_MM
     ax2.scatter([ox], [oz], marker="+", s=160, color=INK, zorder=5); ax2.text(ox + 6, oz + 4, "origin", fontsize=9)
@@ -209,8 +209,7 @@ def fig_steering(cap, log, offset, out):
     ax2.text(xhi + 24, (zlo + zhi) / 2, "finger up / down\n->  arm z", fontsize=9, color=GREY, va="center")
     ax2.set_xlim(xlo - 30, xhi + 90); ax2.set_ylim(78, zhi + 20)
     ax2.set_xlabel("arm x (mm)"); ax2.set_ylabel("arm z (mm)"); ax2.set_aspect("equal")
-    ax2.set_title(f"Workspace box x {xlo:.0f}..{xhi:.0f}, z {zlo:.0f}..{zhi:.0f} mm, y fixed at {oy:.0f}", fontsize=11)
-    ax2.legend(loc="lower left", bbox_to_anchor=(0, 1.0), frameon=False, fontsize=9)
+    ax2.set_title(f"Workspace box x {xlo:.0f}..{xhi:.0f}, z {zlo:.0f}..{zhi:.0f} mm, y fixed at {oy:.0f}\n{len(xs)} streamed targets in this session (blue)", fontsize=10.5)
     ax2.spines[["top", "right"]].set_visible(False)
     fig.savefig(out, bbox_inches="tight", facecolor="white"); plt.close(fig)
 
